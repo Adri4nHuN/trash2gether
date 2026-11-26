@@ -159,6 +159,21 @@
   const cleanName = s => clean(s).replace(/\u{1F451}/gu, '').replace(/\(te\)\s*$/i, '').trim() || '?';
   const norm = s => String(s || '').trim().toLowerCase();
   const getVideo = () => VPATH ? (document.querySelector('video#video, .video-container video, .video-js video, video.vjs-tech') || document.querySelector('video')) : null;
+  // Időbélyeges elem a sorból: a Trash City lejátszója a ?t= paramétert csak 4 percnél hosszabb videónál veszi
+  // figyelembe, a rövidebbeknél mi tekerünk oda (egyszer, betöltéskor).
+  {
+    const o = VPATH ? readSessJSON('tcwt_qs') : null;
+    sess.del('tcwt_qs');
+    const at = o && o.id === vidId(VPATH) && typeof o.s === 'number' && o.s >= 1 && o.s < 86400 ? o.s : 0;
+    const fix = () => {
+      const v = getVideo();
+      if (!v) return false;
+      const go = () => { if (v.duration > at + 1 && Math.abs(v.currentTime - at) > 1.5) v.currentTime = at; };
+      if (v.readyState >= 1) go(); else v.addEventListener('loadedmetadata', go, { once: true });
+      return true;
+    };
+    if (at && !fix()) setTimeout(fix, 600);
+  }
 
   let cid = '';   // az eszköz azonosítója: a saját kulcsából számolódik (lent, idReady)
   const sid = rand(10);
@@ -1503,7 +1518,14 @@
     const id = typeof x.id === 'string' && /^\d{1,10}$/.test(x.id) ? x.id : null;
     if (!id) return null;
     const p = videoPath(x.p);
-    return { id, p: p && vidId(p) === id ? p : '/video/' + id, t: clean(x.t || 'Videó', TITLE_MAX), d: okTime(x.d) ? Math.round(x.d) : 0, by: x.by ? cleanName(x.by) : '' };
+    const it = { id, p: p && vidId(p) === id ? p : '/video/' + id, t: clean(x.t || 'Videó', TITLE_MAX), d: okTime(x.d) ? Math.round(x.d) : 0, by: x.by ? cleanName(x.by) : '' };
+    if (okTime(x.s) && x.s >= 1 && x.s < 86400) it.s = Math.floor(x.s);   // innen induljon (időbélyeges link)
+    return it;
+  }
+  // Sorból indítás: időbélyeggel a lejátszó onnan kezd (a ?t= paramétert utána kivesszük a címből).
+  function openQueued(it) {
+    if (it.s) { sess.set('tcwt_tq', it.id); sess.set('tcwt_qs', JSON.stringify({ id: it.id, s: it.s })); }
+    location.href = location.origin + it.p + (it.s ? '?t=' + it.s : '');
   }
   const inQueue = id => queue.some(x => x.id === id);
   function saveQueue() { if (room) sess.set('tcwt_q_' + room, JSON.stringify({ v: qV, list: queue })); }
@@ -1546,7 +1568,7 @@
     const it = queue.find(x => x.id === id);
     if (!isHost || !it) return;
     markNav();
-    location.href = location.origin + it.p;
+    openQueued(it);
   }
   function suggest(it) {
     if (!room || !it) return false;
@@ -1561,7 +1583,7 @@
       showToast([icon('exclamation-circle'), h('span', { text: ' A hostnál régebbi Trash2Gether fut, még nem kezeli a sort' })], 3000, '');
       return false;
     }
-    publish('m', { id: sid, c: cid, k: 'qadd', n: shown(), ts: Date.now(), q: rand(8), it: { id: it.id, p: it.p, t: it.t, d: it.d } });
+    publish('m', { id: sid, c: cid, k: 'qadd', n: shown(), ts: Date.now(), q: rand(8), it: { id: it.id, p: it.p, t: it.t, d: it.d, s: it.s } });
     showToast([icon('check-lg'), h('span', { text: ' Javasoltad a hostnak' })], 1600, '');
     return true;
   }
@@ -2675,9 +2697,11 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   const statusEl = h('div', { class: 'status', hidden: 'hidden' }, askEl, tapBtn, activityEl);
   // ---- Videósor felülete ----
   const qCount = h('span', { text: 'Videósor' });
-  const qSearchIn = h('input', { class: 'field qin', type: 'search', placeholder: 'Videó keresése…', autocomplete: 'off', maxlength: '80', enterkeyhint: 'search', 'aria-label': 'Videó keresése' });
+  const qSearchIn = h('input', { class: 'field qin', type: 'search', placeholder: 'Keresés vagy videólink…', autocomplete: 'off', maxlength: '1500', enterkeyhint: 'search', 'aria-label': 'Videó keresése' });
   const qSearchBtn = btn('btn sec qbtn', 'search', '', { type: 'button', 'aria-label': 'Keresés', title: 'Keresés', onclick: () => runSearch() });
   qSearchIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } });
+  // bemásolt linknél nem kell Entert nyomni
+  qSearchIn.addEventListener('paste', () => setTimeout(() => { if (parseLink(qSearchIn.value.trim())) runSearch(); }, 0));
   const qResults = h('div', { class: 'qres', hidden: 'hidden' });
   const qHereBtn = btn('btn sec qhere', 'plus-lg', 'Ez a videó a sorba', { type: 'button', onclick: () => {
     const id = vidId(VPATH);
@@ -2703,13 +2727,54 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     return out;
   }
   let searchSeq = 0;
+  // Bemásolt videólink (akár a „Video Link másolása a jelenlegi időtől” menüpontból, …?t=123 végű): az lesz a
+  // találat. Az időbélyeget is elfogadjuk perc:mp vagy 1h2m3s alakban.
+  function parseLink(q) {
+    const m = /^(?:https?:\/\/)?(?:www\.)?trashcity\.net(\/video\/\d+[^\s#?]*)([^\s]*)$/i.exec(q) || /^(\/video\/\d+[^\s#?]*)([^\s]*)$/.exec(q);
+    if (!m) return null;
+    let path = m[1].replace(/\/+$/, '');
+    try { path = new URL(path, location.origin).pathname; } catch (e) { return null; }
+    const id = vidId(path);
+    if (!id) return null;
+    const tm = /[?&#]t=([\d.:hms]+)/i.exec(m[2] || '');
+    let s = 0;
+    if (tm) {
+      const v = tm[1];
+      if (/^\d+(\.\d+)?$/.test(v)) s = +v;
+      else if (/^\d+(:\d{1,2}){1,2}$/.test(v)) s = v.split(':').reduce((a, x) => a * 60 + +x, 0);
+      else { const hms = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/i.exec(v); if (hms) s = (+hms[1] || 0) * 3600 + (+hms[2] || 0) * 60 + (+hms[3] || 0); }
+    }
+    return { id, p: videoPath(path) || '/video/' + id, s: s >= 1 && s < 86400 ? Math.floor(s) : 0 };
+  }
+  async function linkResult(l) {
+    try {
+      const r = await fetch(location.origin + '/video/' + l.id, { credentials: 'same-origin' });
+      if (!r.ok || /notfound|video_missing/i.test(r.url)) return [];
+      const d = new DOMParser().parseFromString(await r.text(), 'text/html');
+      const og = d.querySelector('meta[property="og:title"]'), h1 = d.querySelector('h1');
+      const t = clean(((og && og.content) || (h1 && h1.textContent) || '').replace(/\s+/g, ' ').trim(), TITLE_MAX);
+      if (!t) return [];
+      if (!(vinfo[l.id] && vinfo[l.id].ok)) { try { viSet(l.id, parseVideoPage(d)); } catch (e) {} }
+      const it = qItem({ id: l.id, p: l.p, t, d: vinfo[l.id] && vinfo[l.id].d, s: l.s });
+      return it ? [it] : [];
+    } catch (e) { return null; }
+  }
   async function runSearch() {
-    const q = qSearchIn.value.replace(/\s+/g, ' ').trim().slice(0, 80);
+    const raw = qSearchIn.value.replace(/\s+/g, ' ').trim();
+    const link = parseLink(raw.slice(0, 1500));
+    const q = raw.slice(0, 80);
     const my = ++searchSeq;
     if (!q) { qResults.hidden = true; qResults.replaceChildren(); return; }
     qResults.hidden = false;
-    qResults.replaceChildren(h('div', { class: 'muted qnote', text: 'Keresés…' }));
+    qResults.replaceChildren(h('div', { class: 'muted qnote', text: link ? 'Videó betöltése…' : 'Keresés…' }));
     let items = null;
+    if (link) {
+      items = await linkResult(link);
+      if (my !== searchSeq) return;
+      if (!items) { qResults.replaceChildren(h('div', { class: 'muted qnote', text: 'A videót nem sikerült betölteni.' })); return; }
+      qResults.replaceChildren(...(items.length ? items.map(it => qRow(it, 'res')) : [h('div', { class: 'muted qnote', text: 'Ez a videó nem található.' })]));
+      return;
+    }
     try {
       const r = await fetch(location.origin + '/search/videos/' + encodeURIComponent(q), { credentials: 'same-origin' });
       if (r.ok) items = parseSearch(await r.text());
@@ -2724,8 +2789,8 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (mode === 'q' && !(vinfo[it.id] && vinfo[it.id].ok)) wantVideoInfo(it.id, true);
     const vi = vinfo[it.id] || {};
     const d = it.d || vi.d;
-    const meta = [d ? fmtTime(d) : '', views(vi), vi.u || '', mode === 'q' && it.by ? 'javasolta: ' + it.by : ''].filter(Boolean);
-    const info = h('a', { class: 'qinfo', href: location.origin + it.p, target: '_blank', rel: 'noopener', title: it.t + ' – megnyitás új lapon' },
+    const meta = [d ? fmtTime(d) : '', it.s ? 'innen: ' + fmtTime(it.s) : '', views(vi), vi.u || '', mode === 'q' && it.by ? 'javasolta: ' + it.by : ''].filter(Boolean);
+    const info = h('a', { class: 'qinfo', href: location.origin + it.p + (it.s ? '?t=' + it.s : ''), target: '_blank', rel: 'noopener', title: it.t + ' – megnyitás új lapon' },
       h('div', { class: 'qtitle', text: (mode === 'q' ? (idx + 1) + '. ' : '') + it.t }), meta.length ? marq('qmeta', metaLine(meta)) : null);
     const acts = h('div', { class: 'qacts' });
     if (mode === 'res') {
@@ -3886,7 +3951,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       const cur = vidId(VPATH), seen = seenList(), got = new Set();
       // szobában a közös sor az első
       const fromQ = room && queue.find(x => x.id !== cur);
-      if (fromQ) return { p: fromQ.p, id: fromQ.id, title: fromQ.t, q: true };
+      if (fromQ) return { p: fromQ.p, id: fromQ.id, title: fromQ.t, q: true, s: fromQ.s };
       let best = null, bestRank = Infinity;
       for (const a of document.querySelectorAll('.related-video a[href*="/video/"]')) {
         let u; try { u = new URL(a.href, location.href); } catch (e) { continue; }
@@ -3927,7 +3992,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       markNav();
       sess.set(FAST_KEY, String(auto && played < 2 ? fastHops() + 1 : 0));
       // Az automatikus váltás is új bejegyzés: a Vissza gombbal az előző videóra lehet lapozni.
-      location.href = location.origin + n.p;
+      if (n.q) openQueued(n); else location.href = location.origin + n.p;
     }
     function stop() {
       clearInterval(timer); timer = null;
