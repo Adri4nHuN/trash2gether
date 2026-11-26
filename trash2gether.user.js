@@ -2299,7 +2299,6 @@ header .x.off{opacity:.5}
 .mq.run .mqi{animation:t2gmq var(--mqt,6s) ease-in-out infinite alternate;will-change:transform}
 .mq.run:hover .mqi{animation-play-state:paused}
 @keyframes t2gmq{0%,18%{transform:translateX(0)}82%,100%{transform:translateX(var(--mq,0))}}
-@media (prefers-reduced-motion:reduce){.mq.run{text-overflow:ellipsis;-webkit-mask-image:none;mask-image:none}.mq.run .mqi{animation:none;display:inline}}
 .qacts{display:flex;gap:2px;flex:none}
 .qb{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:transparent;color:var(--tx);border:0;padding:0;cursor:pointer}
 .qb:hover{background:var(--s2)}
@@ -3390,13 +3389,13 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (inQueue(id)) renderQueue();
   }
   // Futószalag: ha egy információs sor nem fér ki, oda-vissza lassan végigfut (rámutatva megáll). Csak akkor
-  // indul, ha tényleg kilóg; a mozgást kérő-kerülő beállításnál marad a „…”-os levágás.
+  // indul, ha tényleg kilóg. (A „kevesebb animáció” rendszerbeállításnál is fut: ezt kifejezetten kérték.)
   const mqObs = typeof ResizeObserver === 'function' ? new ResizeObserver(es => es.forEach(e => fitMarq(e.target))) : null;
   function fitMarq(el) {
     if (!el.isConnected) { mqObs.unobserve(el); return; }
     const w = el.clientWidth, inner = el.firstElementChild;
     if (!w || !inner) return;
-    const over = Math.ceil(inner.scrollWidth - w);
+    const over = Math.ceil(Math.max(inner.scrollWidth, inner.getBoundingClientRect().width) - w);
     if (over > 3) {
       el.style.setProperty('--mq', -over + 'px');
       el.style.setProperty('--mqt', (4 + over / 22).toFixed(1) + 's');
