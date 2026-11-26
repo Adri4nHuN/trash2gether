@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.3.2
+// @version      1.4
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -26,7 +26,7 @@
   de.setAttribute('data-trash2gether', '');
 
   // A fejléc @version sorával egyezzen (a release.py mindkettőt egyszerre írja át).
-  const SCRIPT_VERSION = '1.3.2';
+  const SCRIPT_VERSION = '1.4';
   // Ha valaki a szobában újabb változatot használ, felajánljuk a frissítést. A Tampermonkey a .user.js címet
   // megnyitva rögtön a frissítő oldalát mutatja; a bővítmény-kiadásban ez a projekt oldalára mutat (build.py).
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
@@ -108,6 +108,12 @@
   });
   const store = mk(() => localStorage);
   const sess = mk(() => sessionStorage);
+  // videókártyák adatai (lásd parseVideoPage)
+  const VI_KEY = 'tcwt_vi', VI_MAX = 40;
+  let vinfo = readSessJSON(VI_KEY);
+  if (!vinfo || typeof vinfo !== 'object' || Array.isArray(vinfo)) vinfo = {};
+  let viBudget = 4;
+  const viPending = new Set(), cardRec = new WeakMap();
 
   const rand = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => (b % 36).toString(36)).join('');
   const vidId = p => String(p || '').match(/^\/video\/(\d+)/)?.[1] || null;
@@ -440,7 +446,8 @@
     histTimers.forEach(t => clearTimeout(t)); histTimers.clear();
     if (modArmed) { clearTimeout(modArmed.t); modArmed = null; }
     members.clear(); ownTabs.clear(); kickedAt.clear(); lastAt.clear(); presAt.clear(); chatRate.clear(); devSeen.clear(); joinedAt = 0; oldNoted = false;
-    hostCands.clear(); authWait.ban.clear(); authWait.cfg.clear(); stateWait = null;
+    hostCands.clear(); authWait.ban.clear(); authWait.cfg.clear(); authWait.q.clear(); stateWait = null;
+    queue = []; qV = 0;
     resetRate();
     if (baseRate !== 1) { const v = getVideo(); if (v) setRate(v, 1); baseRate = 1; }
     clearTimeout(stallTimer); stalled = false; holdShown = false;
@@ -465,6 +472,7 @@
     bansV = sb && okVer(sb.v) ? sb.v : 0;
     lockV = +sess.get('tcwt_lockv_' + code) || 0;
     locked = sess.get('tcwt_lock_' + code) === '1';
+    loadQueue(code);
     myJoin();
     isHost = ownsHost();
     initLead(code);
@@ -534,7 +542,7 @@
       renderMembers();
       // Az állapot jöjjön a host-bejegyzés előtt (a szerver a feliratkozás sorrendjében küldi a visszatartott
       // üzeneteket): így a host új lapja előbb a szoba pozíciójára áll, és csak utána irányít.
-      client.subscribe([T('state'), T('m'), T('h'), T('host'), T('cfg'), T('ban'), T('p/+'), OLD_PREFIX + roomTopic + '/p/+']);
+      client.subscribe([T('state'), T('m'), T('h'), T('host'), T('cfg'), T('q'), T('ban'), T('p/+'), OLD_PREFIX + roomTopic + '/p/+']);
       announce();
       if (isHost) sendState();
       const prevSid = sess.get('tcwt_prevsid_' + code);
@@ -721,10 +729,11 @@
   }
   function applyAuthWait() {
     if (!hostRec) return;
-    const b = authWait.ban.get(hostRec.c), f = authWait.cfg.get(hostRec.c);
-    authWait.ban.delete(hostRec.c); authWait.cfg.delete(hostRec.c);
+    const b = authWait.ban.get(hostRec.c), f = authWait.cfg.get(hostRec.c), q = authWait.q.get(hostRec.c);
+    authWait.ban.delete(hostRec.c); authWait.cfg.delete(hostRec.c); authWait.q.delete(hostRec.c);
     if (b) onBans(b, true);
     if (f) onCfg(f, true);
+    if (q) onQueue(q);
   }
   function onBans(m, retained) {
     if (!Array.isArray(m.list) || !okVer(m.v)) return;
@@ -776,7 +785,7 @@
   let settleUntil = 0, leaving = false, hostSince = 0, connects = 0, lostAt = 0, outage = 0, hostInherited = false;
   const settling = () => Date.now() < settleUntil;
   const hostCands = new Map();
-  const authWait = { ban: new Map(), cfg: new Map() };
+  const authWait = { ban: new Map(), cfg: new Map(), q: new Map() };
   let stateWait = null;
   const cameByNav = Date.now() - (+sess.get('tcwt_navat') || 0) < 30000;
   sess.del('tcwt_navat');
@@ -871,6 +880,7 @@
     publish('host', { id: sid, c: hostRec.c, n: hostRec.n, tab: hostRec.tab, ts: hostRec.ts }, true);
     if (bansV) publishBans(false);
     if (lockV) publish('cfg', { id: sid, c: cid, lock: locked, v: lockV }, true);
+    if (qV) publish('q', queueMsg(), true);
     sendState();
   }
   // A visszatartott üzeneteket (host, tiltólista, beállítás, állapot) a host újraküldi: új nézőnek, és ha valaki
@@ -1151,7 +1161,7 @@
   function onCleared(sub) {
     if (!room || leaving) return;
     if (sub === 'p/' + sid) fixOwnPresence();
-    else if (sub === 'host' || sub === 'ban' || sub === 'cfg' || sub === 'state') reassertRetained();
+    else if (sub === 'host' || sub === 'ban' || sub === 'cfg' || sub === 'q' || sub === 'state') reassertRetained();
   }
 
   const chatRate = new Map();
@@ -1170,6 +1180,8 @@
     if (sub === 'state') onState(m, retained);
     else if (sub === 'host') onHostRec(m, retained);
     else if (sub === 'cfg') onCfg(m);
+    else if (sub === 'q') onQueue(m);
+    else if (sub === 'm' && m.k === 'qadd') onSuggest(m, s);
     else if (sub === 'ban') onBans(m, retained);
     else if (sub === 'm' && m.k === 'kick') onKick(m);
     else if (sub === 'm' && m.k === 'chat') {
@@ -1289,7 +1301,7 @@
     const was = deviceOnline(c);
     if (m) {
       const mvMs = typeof m.mv === 'number' && isFinite(m.mv) ? Math.min(Math.max(m.mv, 0), 60000) : 0;
-      members.set(psid, { c: c.slice(0, 20), n: cleanName(m.n), hc: typeof m.hc === 'string' ? m.hc.slice(0, 20) : null, v: videoPath(m.v), ui: validUi(m.ui), t: clean(m.t || '', TITLE_MAX), u: safePath(m.u), j: +m.j || 0, a: !!m.a, tb: typeof m.tb === 'string' ? m.tb.slice(0, 20) : null, mv: mvMs ? Date.now() + mvMs : 0, ld: !!m.ld, at: m.at, rx: Date.now(), br: Number.isInteger(m.br) ? m.br & ((1 << BROKERS.length) - 1) : 0 });
+      members.set(psid, { c: c.slice(0, 20), n: cleanName(m.n), hc: typeof m.hc === 'string' ? m.hc.slice(0, 20) : null, v: videoPath(m.v), ui: validUi(m.ui), t: clean(m.t || '', TITLE_MAX), u: safePath(m.u), j: +m.j || 0, a: !!m.a, tb: typeof m.tb === 'string' ? m.tb.slice(0, 20) : null, mv: mvMs ? Date.now() + mvMs : 0, ld: !!m.ld, at: m.at, rx: Date.now(), sv: typeof m.sv === 'string' ? m.sv.slice(0, 20) : '', br: Number.isInteger(m.br) ? m.br & ((1 << BROKERS.length) - 1) : 0 });
       dropGhost(c);
       noteVersion(m.sv);
     } else {
@@ -1460,6 +1472,98 @@
     if (stateSeen) sysMsg(locked ? 'Csak a host kontrollál 🔒' : 'Mindenki tudja kontrollálni a lejátszást 🔓', 'lock');
     renderMembers();
   }
+  // ---- Közös videósor ----
+  // A sort csak a host írja (aláírt, megtartott üzenet, mint a Korlátozás), így az újonnan belépők is látják, és
+  // más nem írhatja át. Javasolni bárki tud: a javaslat a host oldalához megy, az teszi a sor végére. Az automatikus
+  // továbblépés a sor elejéről veszi a következőt; amit a host elindít, lekerül a sorról.
+  const Q_MAX = 30, QUEUE_SINCE = '1.4';
+  let queue = [], qV = 0;
+  function qItem(x) {
+    if (!x || typeof x !== 'object') return null;
+    const id = typeof x.id === 'string' && /^\d{1,10}$/.test(x.id) ? x.id : null;
+    if (!id) return null;
+    const p = videoPath(x.p);
+    return { id, p: p && vidId(p) === id ? p : '/video/' + id, t: clean(x.t || 'Videó', TITLE_MAX), d: okTime(x.d) ? Math.round(x.d) : 0, by: x.by ? cleanName(x.by) : '' };
+  }
+  const inQueue = id => queue.some(x => x.id === id);
+  function saveQueue() { if (room) sess.set('tcwt_q_' + room, JSON.stringify({ v: qV, list: queue })); }
+  function loadQueue(code) {
+    const o = readSessJSON('tcwt_q_' + code);
+    queue = o && Array.isArray(o.list) ? o.list.map(qItem).filter(Boolean).slice(0, Q_MAX) : [];
+    qV = o && okVer(o.v) ? o.v : 0;
+  }
+  const queueMsg = () => ({ id: sid, c: cid, list: queue, v: qV });
+  function publishQueue() {
+    if (!isHost || !room) return;
+    qV = nextVer(qV);
+    saveQueue();
+    publish('q', queueMsg(), true);
+    renderQueue();
+  }
+  function onQueue(m) {
+    if (!m || !Array.isArray(m.list) || m.list.length > Q_MAX || !okVer(m.v)) return;
+    if (!hostRec || m._s !== hostRec.c) { waitAuth('q', m); return; }
+    if (m.v < qV) return;
+    qV = m.v;
+    queue = m.list.map(qItem).filter(Boolean);
+    saveQueue();
+    renderQueue();
+  }
+  function qAddLocal(it) {
+    if (!it || inQueue(it.id) || (roomV && sameVideo('/video/' + it.id, roomV)) || queue.length >= Q_MAX) return false;
+    queue.push(it);
+    publishQueue();
+    return true;
+  }
+  function qRemove(id) { if (!isHost) return; queue = queue.filter(x => x.id !== id); publishQueue(); }
+  function qUp(id) {
+    const i = queue.findIndex(x => x.id === id);
+    if (!isHost || i < 1) return;
+    [queue[i - 1], queue[i]] = [queue[i], queue[i - 1]];
+    publishQueue();
+  }
+  function qPlay(id) {
+    const it = queue.find(x => x.id === id);
+    if (!isHost || !it) return;
+    markNav();
+    location.href = location.origin + it.p;
+  }
+  function suggest(it) {
+    if (!room || !it) return false;
+    if (isHost) {
+      const ok = qAddLocal(Object.assign({}, it, { by: shown() }));
+      showToast([icon(ok ? 'check-lg' : 'exclamation-circle'), h('span', { text: ok ? ' Sorba téve' : (queue.length >= Q_MAX ? ' Megtelt a sor' : ' Már a sorban van') })], 1600, '');
+      return ok;
+    }
+    // A videósor az 1.4-es változattól van: régebbi host nem látná a javaslatot.
+    const hm = hostRec && [...members.values()].find(x => x.c === hostRec.c && !x.ghost);
+    if (hm && newerVer(QUEUE_SINCE, hm.sv || '0')) {
+      showToast([icon('exclamation-circle'), h('span', { text: ' A hostnál régebbi Trash2Gether fut, még nem kezeli a sort' })], 3000, '');
+      return false;
+    }
+    publish('m', { id: sid, c: cid, k: 'qadd', n: shown(), ts: Date.now(), q: rand(8), it: { id: it.id, p: it.p, t: it.t, d: it.d } });
+    showToast([icon('check-lg'), h('span', { text: ' Javasoltad a hostnak' })], 1600, '');
+    return true;
+  }
+  const sugRate = new Map();
+  function onSuggest(m, s) {
+    if (!fresh(m)) return;
+    const now = Date.now(), times = (sugRate.get(s) || []).filter(t => now - t < 30000);
+    if (times.length >= 5) return;
+    times.push(now); sugRate.set(s, times);
+    if (sugRate.size > 200) sugRate.clear();
+    const it = qItem(Object.assign({}, m.it, { by: m.n }));
+    if (!it) return;
+    if (!inQueue(it.id)) sysMsg('💡 ' + cleanName(m.n) + ' javasolta: ' + it.t);
+    if (isHost) qAddLocal(it);
+  }
+  // A host oldala: ha egy sorban lévő videóra került (bármi módon), az lekerül a sorról.
+  setInterval(() => {
+    if (!isHost || !room || !VPATH || !queue.length) return;
+    const id = vidId(VPATH);
+    if (inQueue(id)) { queue = queue.filter(x => x.id !== id); publishQueue(); }
+  }, 2000);
+
   function revertToHost() {
     if (!lastState || !VPATH || !sameVideo(VPATH, roomV)) return;
     apply({ t: expectedPos(), p: lastState.p, r: lastState.r, b: 1, local: 1 }, false);
@@ -1690,6 +1794,7 @@
     if (!v || v === hooked) return;
     hooked = v;
     setTimeout(holdFollower, 0);
+    addMenuItem();
     fixEndResume(v);
     v.addEventListener('timeupdate', () => { if (!v.seeking) lastTime = v.currentTime; });
     // Az oldal a metaadatok betöltésekor magától a mentett helyre teker (hosszú videóknál). Lassú netnél ez jóval
@@ -1984,7 +2089,7 @@
       const next = isHost ? successor(cid) : null;
       const alone = !members.size;
       publish('p/' + sid, { gone: 1, c: cid }, false);
-      if (alone) ['host', 'state', 'cfg', 'ban', 'h'].forEach(t => clearRetained(t));
+      if (alone) ['host', 'state', 'cfg', 'q', 'ban', 'h'].forEach(t => clearRetained(t));
       clearRetained('p/' + sid);
       publish('m', { id: sid, k: 'bye', x: 1, c: cid, n: shown(), ts: Date.now(), q: rand(8) });
       const last = next ? publish('host', { id: sid, c: next.c, n: next.n, tab: next.tb || null, ts: nextVer(hostRec && hostRec.ts) }, true) : outChain;
@@ -1995,7 +2100,7 @@
     if (act && act.code === room) store.del('tcwt_active');
     store.del('tcwt_chatlast_' + room);
     ['tcwt_room', 'tcwt_hv', 'tcwt_hvt', 'tcwt_went', 'tcwt_follow'].forEach(k => sess.del(k));
-    ['chat', 'prevsid', 'hrec', 'lock', 'lockv', 'bans', 'k', 'known', 'rv'].forEach(k => sess.del('tcwt_' + k + '_' + room));
+    ['chat', 'prevsid', 'hrec', 'lock', 'lockv', 'q', 'bans', 'k', 'known', 'rv'].forEach(k => sess.del('tcwt_' + k + '_' + room));
     ['k', 'j', 'host'].forEach(k => store.del('tcwt_' + k + '_' + room));
     keyJobs.delete(room);
     resetRoomState();
@@ -2155,6 +2260,23 @@ header .x.off{opacity:.5}
 .member.ghost{opacity:.6}
 .input.slow{animation:tcwt-shake .3s}
 @keyframes tcwt-shake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+.qsearch{display:flex;gap:6px;margin-bottom:6px}
+.qsearch .field{min-height:38px;font-size:14px;padding:6px 10px}
+.btn.qbtn{width:auto;min-height:38px;padding:0 12px;flex:none}
+.btn.qhere{min-height:36px;font-size:13.5px;margin:0 0 6px}
+.qres{max-height:260px;overflow:auto;border:1px solid var(--bd);border-radius:var(--r);margin-bottom:8px;padding:0 8px}
+.qnote{padding:8px 0}
+.qrow{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bd)}
+.qrow:last-child{border-bottom:0}
+.qthumb{width:64px;height:36px;object-fit:cover;border-radius:5px;flex:none;background:var(--s2)}
+.qinfo{min-width:0;flex:1;text-decoration:none;color:inherit}
+.qinfo:hover .qtitle{text-decoration:underline}
+.qtitle{font:600 12.5px/1.3 var(--body);color:var(--tx);overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2}
+.qmeta{font:500 11.5px/1.3 var(--body);color:var(--mu)}
+.qacts{display:flex;gap:2px;flex:none}
+.qb{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:transparent;color:var(--tx);border:0;padding:0;cursor:pointer}
+.qb:hover{background:var(--s2)}
+.qb:disabled{opacity:.45;cursor:default;background:transparent}
 .member{display:flex;align-items:center;gap:10px;padding:6px 0;min-height:46px;border-bottom:1px solid var(--bd)}
 .member:last-child{border-bottom:0}
 .minfo{flex:1;min-width:0}
@@ -2206,6 +2328,7 @@ header .x.off{opacity:.5}
 .toast.upd.on{pointer-events:auto}
 .toast.act{gap:7px;padding:7px 14px 7px 7px}
 .toast.act b{font-weight:700}
+.toast .skthumb{display:block;flex:none;margin-left:6px;border-radius:5px;background-repeat:no-repeat;box-shadow:0 0 0 1px rgba(255,255,255,.25)}
 .toast.act .bi{font-size:16px;line-height:1;color:#7fbcff}
 .toast.act span{font-weight:400}
 .locknote{margin-top:6px;font-size:13px;font-weight:700;color:var(--hi)}
@@ -2244,6 +2367,8 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
 .sinfo{min-width:0;display:flex;flex-direction:column;gap:1px}
 .scap{font:600 11.5px/1.2 var(--body);color:var(--mu)}
 .stitle{font:600 12.5px/1.3 var(--body);color:var(--tx);overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2}
+.smeta{font:500 11.5px/1.3 var(--body);color:var(--mu);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stags{font:500 11px/1.3 var(--body);color:var(--mu);opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .epanel{display:none;flex-direction:column;width:236px;height:min(380px,calc(100vh - 110px));background:var(--bg);
   border:1px solid var(--nav);border-radius:10px;box-shadow:var(--shadow);overflow:hidden}
 .dock.emoji-on .epanel{display:flex}
@@ -2358,6 +2483,8 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     'exclamation-circle': '<path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/><path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0M7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0z"/>',
     'chevron-down': '<path fill-rule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708"/>',
     'person': '<path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6m2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0m4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4m-1-.004c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.289 10 8 10s-3.516.68-4.168 1.332c-.678.678-.83 1.418-.832 1.664z"/>',
+    'search': '<path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001q.044.06.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1 1 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0"/>',
+    'arrow-up': '<path fill-rule="evenodd" d="M8 15a.5.5 0 0 0 .5-.5V2.707l3.146 3.147a.5.5 0 0 0 .708-.708l-4-4a.5.5 0 0 0-.708 0l-4 4a.5.5 0 1 0 .708.708L7.5 2.707V14.5a.5.5 0 0 0 .5.5"/>',
     'x-lg': '<path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z"/>',
     'send-fill': '<path d="M15.964.686a.5.5 0 0 0-.65-.65L.767 5.855H.766l-.452.18a.5.5 0 0 0-.082.887l.41.26.001.002 4.995 3.178 3.178 4.995.002.002.26.41a.5.5 0 0 0 .886-.083zm-1.833 1.89L6.637 10.07l-.215-.338a.5.5 0 0 0-.154-.154l-.338-.215 7.494-7.494 1.178-.471z"/>',
     'emoji-smile': '<path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/><path d="M4.285 9.567a.5.5 0 0 1 .683.183A3.5 3.5 0 0 0 8 11.5a3.5 3.5 0 0 0 3.032-1.75.5.5 0 1 1 .866.5A4.5 4.5 0 0 1 8 12.5a4.5 4.5 0 0 1-3.898-2.25.5.5 0 0 1 .183-.683M7 6.5C7 7.328 6.552 8 6 8s-1-.672-1-1.5S5.448 5 6 5s1 .672 1 1.5m4 0c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5S9.448 5 10 5s1 .672 1 1.5"/>',
@@ -2514,6 +2641,81 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       btn('btn', 'broadcast', 'Igen', { onclick: showToRoom }),
       btn('btn sec', 'person', 'Csak én nézem', { onclick: () => { askEl.hidden = true; askDismissed = true; updateStatus(); } })));
   const statusEl = h('div', { class: 'status', hidden: 'hidden' }, askEl, tapBtn, activityEl);
+  // ---- Videósor felülete ----
+  const qCount = h('span', { text: 'Videósor' });
+  const qSearchIn = h('input', { class: 'field qin', type: 'search', placeholder: 'Videó keresése…', autocomplete: 'off', maxlength: '80', enterkeyhint: 'search', 'aria-label': 'Videó keresése' });
+  const qSearchBtn = btn('btn sec qbtn', 'search', '', { type: 'button', 'aria-label': 'Keresés', title: 'Keresés', onclick: () => runSearch() });
+  qSearchIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } });
+  const qResults = h('div', { class: 'qres', hidden: 'hidden' });
+  const qHereBtn = btn('btn sec qhere', 'plus-lg', 'Ez a videó a sorba', { type: 'button', onclick: () => {
+    const id = vidId(VPATH);
+    if (id) suggest({ id, p: VPATH, t: pageLabel(), d: Math.round(videoLen()) });
+    renderQueue();
+  } });
+  const qList = h('div', { class: 'qlist' });
+  const parseDur = s => { const m = /(?:(\d+):)?(\d{1,2}):(\d{2})/.exec(s || ''); return m ? (+(m[1] || 0)) * 3600 + (+m[2]) * 60 + (+m[3]) : 0; };
+  // Az oldal saját keresője (/search/videos/<szöveg>): a találati kártyákból cím, hossz és azonosító.
+  function parseSearch(html) {
+    const d = new DOMParser().parseFromString(html, 'text/html');
+    const out = [], got = new Set();
+    for (const box of d.querySelectorAll('.thumb-overlay')) {
+      const a = box.closest('a[href]');
+      let u; try { u = new URL(a ? a.getAttribute('href') : '', location.origin); } catch (e) { continue; }
+      const id = u.origin === location.origin ? vidId(u.pathname) : null;
+      if (!id || got.has(id)) continue;
+      got.add(id);
+      const img = box.querySelector('img'), tm = box.querySelector('.time');
+      out.push({ id, p: videoPath(u.pathname) || '/video/' + id, t: clean((img && (img.getAttribute('title') || img.getAttribute('alt'))) || 'Videó', TITLE_MAX), d: parseDur(tm ? tm.textContent : '') });
+      if (out.length >= 24) break;
+    }
+    return out;
+  }
+  let searchSeq = 0;
+  async function runSearch() {
+    const q = qSearchIn.value.replace(/\s+/g, ' ').trim().slice(0, 80);
+    const my = ++searchSeq;
+    if (!q) { qResults.hidden = true; qResults.replaceChildren(); return; }
+    qResults.hidden = false;
+    qResults.replaceChildren(h('div', { class: 'muted qnote', text: 'Keresés…' }));
+    let items = null;
+    try {
+      const r = await fetch(location.origin + '/search/videos/' + encodeURIComponent(q), { credentials: 'same-origin' });
+      if (r.ok) items = parseSearch(await r.text());
+    } catch (e) {}
+    if (my !== searchSeq) return;
+    if (!items) { qResults.replaceChildren(h('div', { class: 'muted qnote', text: 'A keresés nem sikerült.' })); return; }
+    qResults.replaceChildren(...(items.length ? items.map(it => qRow(it, 'res')) : [h('div', { class: 'muted qnote', text: 'Nincs találat.' })]));
+  }
+  function qRow(it, mode, idx) {
+    const img = h('img', { class: 'qthumb', alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'same-origin', src: location.origin + '/media/videos/tmb/' + it.id + '/default.jpg' });
+    img.addEventListener('error', () => { img.style.visibility = 'hidden'; });
+    const meta = [it.d ? fmtTime(it.d) : '', mode === 'q' && it.by ? it.by : ''].filter(Boolean).join(' · ');
+    const info = h('a', { class: 'qinfo', href: location.origin + it.p, target: '_blank', rel: 'noopener', title: it.t + ' – megnyitás új lapon' },
+      h('div', { class: 'qtitle', text: (mode === 'q' ? (idx + 1) + '. ' : '') + it.t }), meta ? h('div', { class: 'qmeta', text: meta }) : null);
+    const acts = h('div', { class: 'qacts' });
+    if (mode === 'res') {
+      const done = inQueue(it.id);
+      const b = btn('qb', done ? 'check-lg' : 'plus-lg', '', { type: 'button', title: done ? 'Már a sorban van' : isHost ? 'Sorba' : 'Javaslat a hostnak', 'aria-label': isHost ? 'Sorba' : 'Javaslat a hostnak',
+        onclick: e => { e.stopPropagation(); if (suggest(it)) { b.replaceChildren(icon('check-lg')); b.disabled = true; } } });
+      if (done) b.disabled = true;
+      acts.append(b);
+    } else if (isHost) {
+      acts.append(btn('qb', 'play-fill', '', { type: 'button', title: 'Lejátszás most', 'aria-label': 'Lejátszás most', onclick: () => qPlay(it.id) }));
+      if (idx > 0) acts.append(btn('qb', 'arrow-up', '', { type: 'button', title: 'Feljebb', 'aria-label': 'Feljebb', onclick: () => qUp(it.id) }));
+      acts.append(btn('qb', 'x-lg', '', { type: 'button', title: 'Törlés a sorból', 'aria-label': 'Törlés a sorból', onclick: () => qRemove(it.id) }));
+    }
+    return h('div', { class: 'qrow' }, img, info, acts);
+  }
+  function renderQueue() {
+    qCount.textContent = queue.length ? 'Videósor (' + queue.length + ')' : 'Videósor';
+    qList.replaceChildren(...(queue.length ? queue.map((it, i) => qRow(it, 'q', i))
+      : [h('div', { class: 'muted qnote', text: isHost ? 'A sor üres. Keress videót, vagy tedd be, amit épp nézel.' : 'A sor üres. Keress videót, és javasold a hostnak.' })]));
+    const here = vidId(VPATH);
+    qHereBtn.style.display = room && here && !(roomV && sameVideo(VPATH, roomV)) && !inQueue(here) ? '' : 'none';
+    qHereBtn.querySelector('span').textContent = isHost ? 'Ez a videó a sorba' : 'Ezt a videót javaslom';
+  }
+  const queueSec = section('queue', qCount, h('div', { class: 'qsearch' }, qSearchIn, qSearchBtn), qResults, qHereBtn, qList);
+
   const liveEl = h('div', { class: 'top live', role: 'tabpanel' },
     section('room', h('span', { text: 'Vezérlés' }),
       hostBox,
@@ -2521,6 +2723,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
         h('div', { class: 'muted', text: 'Szobakód' }),
         h('div', { class: 'coderow' }, codeEl, eyeBtn, codeBtn),
         leaveBtn)),
+    queueSec,
     section('members', countEl,
       membersEl,
       banBox,
@@ -2614,6 +2817,22 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const hh = Math.floor(sec / 3600), mm = Math.floor(sec % 3600 / 60), ss = String(sec % 60).padStart(2, '0');
     return hh ? hh + ':' + String(mm).padStart(2, '0') + ':' + ss : mm + ':' + ss;
   };
+  // Előnézeti kép egy időponthoz az oldal lejátszójának saját képsorából (a tekerősáv fölötti kis kép is ebből
+  // jön): 3 másodpercenként egy kocka, a sprite.json mondja meg, hol van a képen. Ha nincs ilyen, nincs kép.
+  function seekThumb(t, w) {
+    try {
+      const md = window.metadata, sp = window.preloadedSprites;
+      if (!window.spriteMode || !md || typeof md !== 'object' || !Array.isArray(sp) || !okTime(t)) return null;
+      let idx = Math.floor(t / 3) + 1, f = md['o' + idx + '.jpg'];
+      while (!f && idx > 1) f = md['o' + (--idx) + '.jpg'];
+      const img = f && sp[(f.sprite || 1) - 1];
+      if (!img || !img.naturalWidth || !(f.width > 0) || !(f.height > 0) || !/^https:\/\/(www\.)?trashcity\.net\//.test(img.src)) return null;
+      const k = w / f.width;
+      return h('span', { class: 'skthumb', 'aria-hidden': 'true', style: `width:${w}px;height:${Math.round(f.height * k)}px;` +
+        `background-image:url("${img.src}");background-position:-${Math.round(f.x * k)}px -${Math.round(f.y * k)}px;` +
+        `background-size:${Math.round(img.naturalWidth * k)}px auto` });
+    } catch (e) { return null; }
+  }
   function showAction(m) {
     const who = clean(m.n);
     let ic, txt;
@@ -2624,7 +2843,8 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       ic = back ? 'rewind-fill' : 'fast-forward-fill';
       txt = (back ? 'visszatekert' : 'előretekert') + (okTime(m.f) ? ': ' + fmtTime(m.f) + ' → ' + fmtTime(m.t) : ' ide: ' + fmtTime(m.t));
     } else return;
-    showToast([avatarEl(who, m.ui, 'xs'), h('b', { text: who }), icon(ic), h('span', { text: txt })], 2600, 'act');
+    const th = m.a === 'seek' ? seekThumb(m.t, 96) : null;
+    showToast([avatarEl(who, m.ui, 'xs'), h('b', { text: who }), icon(ic), h('span', { text: txt }), ...(th ? [th] : [])], th ? 3200 : 2600, 'act');
   }
   function lockToast() {
     showToast([icon('lock-fill'), h('span', { text: ' Csak a host kontrollál' })], 1800, '');
@@ -2906,6 +3126,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   }
   function drawMembers() {
     if (!room) return;
+    renderQueue();
     const byDevice = new Map();
     const isHostEntry = m => !!(hostRec && hostConfirmed && m.c === hostRec.c && (!hostRec.tab || m.tb === hostRec.tab));
     members.forEach(m => { const o = byDevice.get(m.c); if (!o || (!isHostEntry(o) && (isHostEntry(m) || (m.ld && !o.ld)))) byDevice.set(m.c, m); });
@@ -3055,6 +3276,8 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const len = Math.round(videoLen());
     if (len === stampLen) return;
     stampLen = len;
+    const myId = vidId(VPATH);
+    if (len > 0 && myId && (!vinfo[myId] || vinfo[myId].d !== len)) viSet(myId, { d: len });
     if (room && chatLog.some(x => !x.s && x.v && /\d:\d\d/.test(x.m))) { const keep = stick, top = msgsEl.scrollTop; renderChat(); if (!keep) { stick = false; msgsEl.scrollTop = top; } }
   }, 1000);
   const onlySmileys = text => !!text && String(text).search(TOKEN) >= 0 && !String(text).replace(TOKEN, '').trim() &&
@@ -3123,6 +3346,53 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   // Rendszerüzenet a chatben; a videóváltásnál a videó bélyegképével (csak a videó számából építve).
   // A videókártyák egyforma szélesek (szép lista lesz belőlük), látszik rajtuk az idő, és kattintásra a videó
   // új lapon nyílik meg – a szoba lapja közben marad, ahol volt.
+  // Videókártya adatai: a videó oldalából (feltöltő, megtekintések, mikor töltötték fel, címkék) – mindenki maga
+  // tölti le az oldalról, így nem kell küldeni, és hamisítani sem lehet. A hosszt az tudja, aki épp azt nézi.
+  // A böngészőlapon belül megjegyezzük; oldalanként legfeljebb néhány lekérés (a legutóbbi kártyákhoz).
+  function viSet(id, patch) {
+    if (!/^\d{1,10}$/.test(id)) return;
+    vinfo[id] = Object.assign({}, vinfo[id], patch, { at: Date.now() });
+    const ids = Object.keys(vinfo);
+    if (ids.length > VI_MAX) ids.sort((a, b) => (vinfo[a].at || 0) - (vinfo[b].at || 0)).slice(0, ids.length - VI_MAX).forEach(k => delete vinfo[k]);
+    sess.set(VI_KEY, JSON.stringify(vinfo));
+    refreshCards(id);
+  }
+  function parseVideoPage(html) {
+    const d = new DOMParser().parseFromString(html, 'text/html');
+    const tags = [...d.querySelectorAll('meta[property="video:tag"]')].map(m => clean(m.content || '', 30).trim()).filter(Boolean).slice(0, 5);
+    const up = d.querySelector('a[href^="/user/"] .bold');
+    const eye = d.querySelector('i.bi-eye-fill');
+    const vm = eye && eye.parentElement ? /(\d[\d\s.]{0,12})/.exec(eye.parentElement.textContent) : null;
+    const am = /(\d{1,4}\s+(?:másodperc|perc|órá|óra|nap|hét|het|hónap|év)\S*\s+ezelőtt)/.exec(d.body ? d.body.textContent : '');
+    return { ok: 1, tags, u: up ? clean(up.textContent.trim(), 40) : '', views: vm ? +vm[1].replace(/\D/g, '') : null, age: am ? am[1].replace(/\s+/g, ' ') : '' };
+  }
+  function wantVideoInfo(id) {
+    if (!id || (vinfo[id] && vinfo[id].ok) || viPending.has(id) || viBudget <= 0) return;
+    viBudget--; viPending.add(id);
+    fetch(location.origin + '/video/' + id, { credentials: 'same-origin' })
+      .then(r => (r.ok ? r.text() : null))
+      .then(html => { if (html) viSet(id, parseVideoPage(html)); })
+      .catch(() => {})
+      .finally(() => viPending.delete(id));
+  }
+  function refreshCards(id) {
+    const keep = stick;
+    msgsEl.querySelectorAll('.svid[data-vid="' + id + '"]').forEach(n => { const r = cardRec.get(n); if (r) n.replaceWith(sysNode(r)); });
+    if (keep) msgsEl.scrollTop = msgsEl.scrollHeight;
+  }
+  function cardMeta(vid) {
+    const i = vinfo[vid];
+    if (!i) return null;
+    const parts = [];
+    if (i.d > 0) parts.push(fmtTime(i.d));
+    if (i.views != null && isFinite(i.views)) parts.push(i.views.toLocaleString('hu-HU') + ' megtekintés');
+    if (i.u) parts.push(i.u);
+    if (i.age) parts.push(i.age);
+    const kids = [];
+    if (parts.length) kids.push(h('div', { class: 'smeta', text: parts.join(' · ') }));
+    if (Array.isArray(i.tags) && i.tags.length) kids.push(h('div', { class: 'stags', text: i.tags.map(t => '#' + t).join(' ') }));
+    return kids;
+  }
   function sysNode(r) {
     const vid = typeof r.vid === 'string' && /^\d{1,10}$/.test(r.vid) ? r.vid : '';
     if (!vid || !r.s.startsWith(VIDEO_MSG)) return h('div', { class: 'sys', text: r.s });
@@ -3131,10 +3401,14 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const tm = r.ts ? new Date(r.ts).toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' }) : '';
     const img = h('img', { class: 'sthumb', alt: '', decoding: 'async', referrerpolicy: 'same-origin', src: location.origin + '/media/videos/tmb/' + vid + '/default.jpg' });
     img.addEventListener('error', () => img.remove());
-    const kids = [img, h('div', { class: 'sinfo' }, h('div', { class: 'scap', text: 'Új videó' + (tm ? ' · ' + tm : '') }), h('div', { class: 'stitle', text: title }))];
-    return path
-      ? h('a', { class: 'sys svid', href: location.origin + path, target: '_blank', rel: 'noopener', title: title + ' – megnyitás új lapon' }, ...kids)
-      : h('div', { class: 'sys svid', title }, ...kids);
+    const meta = cardMeta(vid);
+    if (!meta) wantVideoInfo(vid);
+    const kids = [img, h('div', { class: 'sinfo' }, h('div', { class: 'scap', text: 'Új videó' + (tm ? ' · ' + tm : '') }), h('div', { class: 'stitle', text: title }), meta || [])];
+    const node = path
+      ? h('a', { class: 'sys svid', 'data-vid': vid, href: location.origin + path, target: '_blank', rel: 'noopener', title: title + ' – megnyitás új lapon' }, ...kids)
+      : h('div', { class: 'sys svid', 'data-vid': vid, title }, ...kids);
+    cardRec.set(node, r);
+    return node;
   }
   // Az azonos fajtájú, gyorsan egymást követő rendszerüzenetek (pl. ki-be lépés) egy sorba olvadnak. A videóváltások
   // viszont mind külön maradnak, így visszanézhető, mi ment le – csak az pár mp alatt továbbléptetett videó cserélődik.
@@ -3384,6 +3658,52 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     inputEl.scrollTop = inputEl.scrollHeight;
   }
 
+  // Szöveg beszúrása a chat beviteli mezőjébe a kurzorhoz (vagy a végére).
+  function insertChatText(text) {
+    let r = savedRange && inputEl.contains(savedRange.startContainer) ? savedRange : null;
+    if (!r) { r = document.createRange(); r.selectNodeContents(inputEl); r.collapse(false); }
+    const tn = document.createTextNode(text);
+    r.deleteContents();
+    r.insertNode(tn);
+    r.setStartAfter(tn);
+    r.collapse(true);
+    inputEl.focus({ preventScroll: true });
+    const s = getSel();
+    if (s) { s.removeAllRanges(); s.addRange(r); }
+    savedRange = r.cloneRange();
+  }
+  // Az oldal jobb-kattintós lejátszó-menüjébe (Ismétlés, Link másolása…) egy saját pont: az aktuális időpontot
+  // beírja a chatbe, a többieknél ez kattintható időbélyeg lesz. Csak szobában, a szoba videóján látszik.
+  const onRoomVideoNow = () => !!(room && VPATH && roomV && sameVideo(VPATH, roomV));
+  function stampToChat() {
+    const v = getVideo();
+    if (!v || !onRoomVideoNow()) return;
+    togglePanel(true);
+    setView('chat');
+    const cur = inputEl.textContent;
+    insertChatText((cur && !/\s$/.test(cur) ? ' ' : '') + fmtTime(v.currentTime) + ' ');
+  }
+  function addMenuItem() {
+    const ul = document.querySelector('.custom-menu ul');
+    if (!ul || ul.querySelector('.t2g-mi')) return;
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('height', '24'); svg.setAttribute('width', '24'); svg.setAttribute('viewBox', '0 -960 960 960');
+    const path = document.createElementNS(NS, 'path');
+    // Material Symbols „chat” (Apache 2.0)
+    path.setAttribute('d', 'M240-400h320v-80H240v80Zm0-120h480v-80H240v80Zm0-120h480v-80H240v80ZM80-80v-720q0-33 23.5-56.5T160-880h640q33 0 56.5 23.5T880-800v480q0 33-23.5 56.5T800-240H240L80-80Zm126-240h594v-480H160v525l46-45Zm-46 0v-480 480Z');
+    path.setAttribute('fill', 'currentColor');
+    svg.append(path);
+    const li = document.createElement('li');
+    li.className = 't2g-mi';
+    li.append(svg, document.createTextNode(' Időpont a chatbe'));
+    li.style.display = 'none';
+    li.addEventListener('click', stampToChat);
+    ul.append(li);
+    const vc = document.querySelector('.video-container');
+    if (vc) vc.addEventListener('contextmenu', () => { li.style.display = onRoomVideoNow() ? '' : 'none'; }, true);
+  }
+
   inputEl.addEventListener('paste', e => {
     e.preventDefault();
     const left = TEXT_MAX - inputEl.textContent.length;
@@ -3457,6 +3777,8 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const AP_KEY = 'tcwt_autonext', WAIT_S = 5;
     const isOn = () => store.get(AP_KEY) === '1';
     const canSwitch = () => !room || (isHost && isLead());
+    // a közös sorból a hostnál akkor is jön a következő, ha az automatikus lejátszás ki van kapcsolva
+    const wantsNext = () => isOn() || !!(room && isHost && queue.some(x => x.id !== vidId(VPATH)));
     // Az ezen a lapon már látott videók (legrégebbi elöl). Enélkül két videó egymást ajánlotta volna első helyen,
     // és az automatikus lejátszás a végtelenségig ezek között ugrált volna.
     const SEEN_KEY = 'tcwt_seen';
@@ -3464,6 +3786,9 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     { const cur = vidId(VPATH), a = seenList().filter(x => x !== cur); a.push(cur); sess.set(SEEN_KEY, JSON.stringify(a.slice(-60))); }
     function nextVideo() {
       const cur = vidId(VPATH), seen = seenList(), got = new Set();
+      // szobában a közös sor az első
+      const fromQ = room && queue.find(x => x.id !== cur);
+      if (fromQ) return { p: fromQ.p, id: fromQ.id, title: fromQ.t, q: true };
       let best = null, bestRank = Infinity;
       for (const a of document.querySelectorAll('.related-video a[href*="/video/"]')) {
         let u; try { u = new URL(a.href, location.href); } catch (e) { continue; }
@@ -3512,10 +3837,11 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     }
     function countdown() {
       const vc = document.querySelector('.video-container'), n = nextVideo();
-      if (!vc || !n || card || !isOn() || !canSwitch()) return;
+      if (!vc || !n || card || !wantsNext() || !canSwitch()) return;
       const braked = fastHops() >= 3 && played < 2;
       const until = Date.now() + WAIT_S * 1000;
-      const cap = h('div', { class: 't2g-ncap', text: braked ? 'Következő videó' : 'Következő videó ' + WAIT_S + ' mp múlva' });
+      const capBase = n.q ? 'Következő a sorból' : 'Következő videó';
+      const cap = h('div', { class: 't2g-ncap', text: braked ? capBase : capBase + ' ' + WAIT_S + ' mp múlva' });
       const img = h('img', { class: 't2g-nimg', alt: '', src: location.origin + '/media/videos/tmb/' + n.id + '/default.jpg' });
       img.addEventListener('error', () => img.remove());
       card = h('div', { class: 't2g-next' },
@@ -3528,10 +3854,10 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       if (braked) return;
       timer = setInterval(() => {
         const v = getVideo();
-        if (!isOn() || !canSwitch() || !v || !v.ended) { stop(); return; }
+        if (!wantsNext() || !canSwitch() || !v || !v.ended) { stop(); return; }
         const left = Math.ceil((until - Date.now()) / 1000);
         if (left <= 0) { go(true); return; }
-        cap.textContent = 'Következő videó ' + left + ' mp múlva';
+        cap.textContent = capBase + ' ' + left + ' mp múlva';
       }, 1000);
     }
     const refocus = () => { const pb = document.querySelector('.video-container .play-pause-btn'); if (pb) pb.focus({ preventScroll: true }); };
