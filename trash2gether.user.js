@@ -112,8 +112,8 @@
   const store = mk(() => localStorage);
   const sess = mk(() => sessionStorage);
   // videókártyák adatai (lásd parseVideoPage)
-  const VI_KEY = 'tcwt_vi2', VI_MAX = 40;   // 2: a megtekintésszám a saját dobozból (a régi néha az oldalsávból jött)
-  try { sessionStorage.removeItem('tcwt_vi'); } catch (e) {}
+  const VI_KEY = 'tcwt_vi3', VI_MAX = 40;   // 3: kategóriák is (a régebbi tárolt adatokból hiányoznak)
+  try { sessionStorage.removeItem('tcwt_vi'); sessionStorage.removeItem('tcwt_vi2'); } catch (e) {}
   let vinfo = readSessJSON(VI_KEY);
   if (!vinfo || typeof vinfo !== 'object' || Array.isArray(vinfo)) vinfo = {};
   const viPending = new Set(), viWait = [], cardRec = new WeakMap();
@@ -2394,7 +2394,8 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
 .scap{font:600 11.5px/1.2 var(--body);color:var(--mu)}
 .stitle{font:600 12.5px/1.3 var(--body);color:var(--tx);overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2}
 .smeta{font:500 11.5px/1.3 var(--body);color:var(--mu);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.stags{font:500 11px/1.3 var(--body);color:var(--mu);opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scats{font:600 11px/1.3 var(--body);color:var(--mu);opacity:.9}
+.mq svg.si{width:1.1em;height:1.1em;vertical-align:-.2em;margin-right:3px;fill:currentColor;flex:none}
 .epanel{display:none;flex-direction:column;width:236px;height:min(380px,calc(100vh - 110px));background:var(--bg);
   border:1px solid var(--nav);border-radius:10px;box-shadow:var(--shadow);overflow:hidden}
 .dock.emoji-on .epanel{display:flex}
@@ -2494,6 +2495,10 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
 
   // Bootstrap Icons 1.13.2 (MIT) – beépítve, így nem kell külön ikonbetűtípust letölteni.
   const ICONS = {
+    // az oldal saját ikonjai (Font Awesome „eye”, Material Icons „thumb_up_alt” / „thumb_down_alt”) – [viewBox, rajz]
+    'site-eye': ['0 0 576 512', '<path d="M572.52 241.4C518.29 135.59 410.93 64 288 64S57.68 135.64 3.48 241.41a32.35 32.35 0 0 0 0 29.19C57.71 376.41 165.07 448 288 448s230.32-71.64 284.52-177.41a32.35 32.35 0 0 0 0-29.19zM288 400a144 144 0 1 1 144-144 143.93 143.93 0 0 1-144 144zm0-240a95.31 95.31 0 0 0-25.31 3.79 47.85 47.85 0 0 1-66.9 66.9A95.78 95.78 0 1 0 288 160z"/>'],
+    'site-up': ['0 0 24 24', '<path d="M2 20h2c.55 0 1-.45 1-1v-9c0-.55-.45-1-1-1H2v11zm19.83-7.12c.11-.25.17-.52.17-.8V11c0-1.1-.9-2-2-2h-5.5l.92-4.65c.05-.22.02-.46-.08-.66-.23-.45-.52-.86-.88-1.22L14 2 7.59 8.41C7.21 8.79 7 9.3 7 9.83v7.84C7 18.95 8.05 20 9.34 20h8.11c.7 0 1.36-.37 1.72-.97l2.66-6.15z"/>'],
+    'site-down': ['0 0 24 24', '<path d="M22 4h-2c-.55 0-1 .45-1 1v9c0 .55.45 1 1 1h2V4zM2.17 11.12c-.11.25-.17.52-.17.8V13c0 1.1.9 2 2 2h5.5l-.92 4.65c-.05.22-.02.46.08.66.23.45.52.86.88 1.22L10 22l6.41-6.41c.38-.38.59-.89.59-1.42V6.34C17 5.05 15.95 4 14.66 4h-8.1c-.71 0-1.36.37-1.72.97l-2.67 6.15z"/>'],
     'broadcast': '<path d="M3.05 3.05a7 7 0 0 0 0 9.9.5.5 0 0 1-.707.707 8 8 0 0 1 0-11.314.5.5 0 0 1 .707.707m2.122 2.122a4 4 0 0 0 0 5.656.5.5 0 1 1-.708.708 5 5 0 0 1 0-7.072.5.5 0 0 1 .708.708m5.656-.708a.5.5 0 0 1 .708 0 5 5 0 0 1 0 7.072.5.5 0 1 1-.708-.708 4 4 0 0 0 0-5.656.5.5 0 0 1 0-.708m2.122-2.12a.5.5 0 0 1 .707 0 8 8 0 0 1 0 11.313.5.5 0 0 1-.707-.707 7 7 0 0 0 0-9.9.5.5 0 0 1 0-.707zM10 8a2 2 0 1 1-4 0 2 2 0 0 1 4 0"/>',
     'play-fill': '<path d="m11.596 8.697-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393"/>',
     'plus-lg': '<path fill-rule="evenodd" d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2"/>',
@@ -2536,9 +2541,10 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (!t) {
       t = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       t.setAttribute('class', 'bi');
-      t.setAttribute('viewBox', '0 0 16 16');
+      const d = ICONS[n] || '';
+      t.setAttribute('viewBox', Array.isArray(d) ? d[0] : '0 0 16 16');
       t.setAttribute('aria-hidden', 'true');
-      t.innerHTML = ICONS[n] || '';
+      t.innerHTML = Array.isArray(d) ? d[1] : d;
       iconTpl.set(n, t);
     }
     return t.cloneNode(true);
@@ -2718,10 +2724,9 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (mode === 'q' && !(vinfo[it.id] && vinfo[it.id].ok)) wantVideoInfo(it.id, true);
     const vi = vinfo[it.id] || {};
     const d = it.d || vi.d;
-    const meta = [d ? fmtTime(d) : '', vi.views != null && isFinite(vi.views) ? vi.views.toLocaleString('hu-HU') + ' megtekintés' : '', vi.u || '',
-      mode === 'q' && it.by ? 'javasolta: ' + it.by : ''].filter(Boolean).join(' · ');
+    const meta = [d ? fmtTime(d) : '', views(vi), vi.u || '', mode === 'q' && it.by ? 'javasolta: ' + it.by : ''].filter(Boolean);
     const info = h('a', { class: 'qinfo', href: location.origin + it.p, target: '_blank', rel: 'noopener', title: it.t + ' – megnyitás új lapon' },
-      h('div', { class: 'qtitle', text: (mode === 'q' ? (idx + 1) + '. ' : '') + it.t }), meta ? marq('qmeta', meta) : null);
+      h('div', { class: 'qtitle', text: (mode === 'q' ? (idx + 1) + '. ' : '') + it.t }), meta.length ? marq('qmeta', metaLine(meta)) : null);
     const acts = h('div', { class: 'qacts' });
     if (mode === 'res') {
       const done = inQueue(it.id);
@@ -3402,8 +3407,9 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       el.classList.add('run');
     } else el.classList.remove('run');
   }
-  function marq(cls, text) {
-    const el = h('div', { class: cls + ' mq', title: text }, h('span', { class: 'mqi', text }));
+  function marq(cls, content) {
+    const inner = h('span', { class: 'mqi' }, ...(Array.isArray(content) ? content : [content]));
+    const el = h('div', { class: cls + ' mq', title: inner.textContent.replace(/\u2002/g, ' ') }, inner);
     if (mqObs) mqObs.observe(el);
     return el;
   }
@@ -3418,7 +3424,16 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const vm = eye && eye.parentElement ? /(\d[\d\s.]{0,12})/.exec(eye.parentElement.textContent) : null;
     const am = sub ? /(\d{1,4}\s+(?:másodperc|perc|órá|óra|nap|hét|het|hónap|év)\S*\s+ezelőtt)/.exec(sub.textContent) : null;
     const num = sel => { const e = d.querySelector(sel); const n = e ? parseInt(e.textContent.replace(/\D/g, ''), 10) : NaN; return isFinite(n) ? n : null; };
-    return { ok: 1, tags, u: up ? clean(up.textContent.trim(), 40) : '', views: vm ? +vm[1].replace(/\D/g, '') : null, age: am ? am[1].replace(/\s+/g, ' ') : '',
+    // Kategória: <b><a href="/videos/…">Név</a>, <a …>…</a></b> – a „Kategória nélkül” nem számít
+    const cats = [];
+    for (const a of d.querySelectorAll('.content-left a[href^="/videos/"], .card-sub ~ * a[href^="/videos/"]')) {
+      const box = a.closest('div');
+      if (!box || !/^\s*Kategóri/.test(box.textContent) || /kategoria-nelkul/.test(a.getAttribute('href'))) continue;
+      const n = clean(a.textContent.replace(/^[\s.…]+/, '').trim(), 40);
+      if (n && !cats.includes(n)) cats.push(n);
+      if (cats.length >= 4) break;
+    }
+    return { ok: 1, tags, cats, u: up ? clean(up.textContent.trim(), 40) : '', views: vm ? +vm[1].replace(/\D/g, '') : null, age: am ? am[1].replace(/\s+/g, ' ') : '',
       lk: num('[id^="likes_video_"]'), dl: num('[id^="dislikes_video_"]') };
   }
   // Lekérési sor: egyszerre legfeljebb kettő, oldalanként legfeljebb 16. A chat kártyái előre kerülnek (a legújabb
@@ -3429,7 +3444,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (!/^\d{1,10}$/.test(id || '') || (vinfo[id] && vinfo[id].ok) || viPending.has(id)) return;
     if (id === vidId(VPATH) && document.body) {
       let r = null; try { r = parseVideoPage(document); } catch (e) {}
-      if (r && (r.u || r.tags.length || r.views != null)) { viSet(id, r); return; }
+      if (r && (r.u || r.cats.length || r.tags.length || r.views != null)) { viSet(id, r); return; }
     }
     const f = viFail.get(id);
     if (f && (f.n >= 2 || Date.now() - f.at < 30000)) return;
@@ -3454,18 +3469,26 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     msgsEl.querySelectorAll('.svid[data-vid="' + id + '"]').forEach(n => { const r = cardRec.get(n); if (r) n.replaceWith(sysNode(r)); });
     if (keep) msgsEl.scrollTop = msgsEl.scrollHeight;
   }
+  // Információs sor darabjai: szöveg, vagy [ikon, szöveg]; köztük „ · ”.
+  function metaLine(parts) {
+    const out = [];
+    parts.filter(Boolean).forEach((p, i) => {
+      if (i) out.push(' · ');
+      if (Array.isArray(p)) p.forEach((q, j) => { if (j % 2) out.push(String(q)); else if (q) { if (j) out.push('\u2002'); out.push(siteIcon(q)); } });
+      else out.push(p);
+    });
+    return out;
+  }
+  const siteIcon = n => { const e = icon(n); e.setAttribute('class', 'bi si'); return e; };
+  const views = i => i.views != null && isFinite(i.views) ? ['site-eye', i.views.toLocaleString('hu-HU')] : null;
   function cardMeta(vid) {
     const i = vinfo[vid];
     if (!i) return null;
-    const parts = [];
-    if (i.d > 0) parts.push(fmtTime(i.d));
-    if (i.views != null && isFinite(i.views)) parts.push(i.views.toLocaleString('hu-HU') + ' megtekintés');
-    if (i.u) parts.push(i.u);
-    if (i.age) parts.push(i.age);
-    if (i.lk != null || i.dl != null) parts.push('👍 ' + (i.lk || 0) + ' 👎 ' + (i.dl || 0));
+    const parts = [i.d > 0 ? fmtTime(i.d) : '', views(i), i.u || '', i.age || '',
+      i.lk != null || i.dl != null ? ['site-up', i.lk || 0, 'site-down', i.dl || 0] : null].filter(Boolean);
     const kids = [];
-    if (parts.length) kids.push(marq('smeta', parts.join(' · ')));
-    if (Array.isArray(i.tags) && i.tags.length) kids.push(marq('stags', i.tags.map(t => '#' + t).join(' ')));
+    if (parts.length) kids.push(marq('smeta', metaLine(parts)));
+    if (Array.isArray(i.cats) && i.cats.length) kids.push(marq('scats', i.cats.join(' · ')));
     return kids;
   }
   function sysNode(r) {
