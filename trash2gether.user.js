@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.3
+// @version      1.3.1
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -29,7 +29,7 @@
   // DNS-/reklámszűrő listák (Pi-hole, AdGuard Home, NextDNS, uBlock Origin-be importálva) tiltják a broker.emqx.io-t –
   // aki ilyet használ, az a másikon át ugyanúgy a szobában van. Egy szerver kiesését sem veszi észre senki.
   // A fejléc @version sorával egyezzen (a release.py mindkettőt egyszerre írja át).
-  const SCRIPT_VERSION = '1.3';
+  const SCRIPT_VERSION = '1.3.1';
   // Ha valaki a szobában újabb változatot használ, felajánljuk a frissítést. A Tampermonkey a .user.js címet
   // megnyitva rögtön a frissítő oldalát mutatja; a bővítmény-kiadásban ez a projekt oldalára mutat (build.py).
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
@@ -1779,15 +1779,26 @@
     if (room && hooked && hooked.preload !== 'auto') { try { hooked.preload = 'auto'; } catch (e) {} }
     localSync();
   }, 1000);
+  // A böngésző Vissza/Előre gombjánál a régi oldal a memóriából (bfcache) is visszajöhet, a régi állapotával:
+  // közben mások kiléphettek, a chat és a host változhatott, vagy épp egy későbbi oldalon kiléptél / másik
+  // szobába mentél. Ezért úgy kezeljük, mint egy friss betöltést: a böngészőlap mostani adataiból indulunk újra.
   addEventListener('pageshow', e => {
     if (!e.persisted) return;
     navigating = false; leaving = false;
-    if (!room) return;
-    if (client && !client.connected) client.reconnect();
-    else if (client) announce();
-    renderMembers();
-    if (!isHost && isLead()) { precise = true; setTimeout(requestSync, 300); }
+    const cur = validCode(sess.get('tcwt_room') || '') ? sess.get('tcwt_room') : '';
+    if (cur) { connect(cur); renderMembers(); return; }
+    if (room) dropRoomLocal();
   });
+  // Csak ennél a lapnál zárja le a szobát, üzenet nélkül (a kilépést egy másik oldal már elküldte).
+  function dropRoomLocal() {
+    if (client) { const c = client; client = null; try { c.end(true); } catch (e) {} }
+    resetRoomState();
+    room = ''; roomV = null; roomVT = '';
+    chatLog = []; seenIds.clear();
+    msgsEl.replaceChildren(emptyEl);
+    unread = 0; updateBadge();
+    setLive(false);
+  }
   setTimeout(() => { if (room) { announce(); renderMembers(); } }, 2500);
   setInterval(() => {
     const v = getVideo();
