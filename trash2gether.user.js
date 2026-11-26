@@ -25,15 +25,18 @@
   window.__trash2gether = true;
   de.setAttribute('data-trash2gether', '');
 
-  // Két nyilvános MQTT szerverre kapcsolódunk egyszerre, és mindkettőre ugyanazt küldjük. A népszerű HaGeZi
-  // DNS-/reklámszűrő listák (Pi-hole, AdGuard Home, NextDNS, uBlock Origin-be importálva) tiltják a broker.emqx.io-t –
-  // aki ilyet használ, az a másikon át ugyanúgy a szobában van. Egy szerver kiesését sem veszi észre senki.
   // A fejléc @version sorával egyezzen (a release.py mindkettőt egyszerre írja át).
   const SCRIPT_VERSION = '1.3.1';
   // Ha valaki a szobában újabb változatot használ, felajánljuk a frissítést. A Tampermonkey a .user.js címet
   // megnyitva rögtön a frissítő oldalát mutatja; a bővítmény-kiadásban ez a projekt oldalára mutat (build.py).
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
-  const BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://mqtt.eclipseprojects.io:443/mqtt'];
+  // Több nyilvános MQTT szerverre kapcsolódunk egyszerre, és mindegyikre ugyanazt küldjük; elég, ha kettőnek van
+  // közös szervere. A népszerű HaGeZi DNS-/reklámszűrő listák (Pi-hole, AdGuard Home, NextDNS, uBlock Origin-be
+  // importálva) tiltják a broker.emqx.io-t (és a HiveMQ-t is), aki ilyet használ, a többin át van a szobában.
+  // Az Eclipse szerver böngészős (WebSocket) elérése 2026 végén nem működött, ezért jött a Mosquitto; az Eclipse a
+  // helyén marad (a sorrend a régebbi változatokkal közös), ha visszajön, azt is használjuk. A Mosquitto nem küldi
+  // el a „végakaratot”, ott a lezárt lapot a búcsúüzenet és a jelenlét lejárta jelzi.
+  const BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://mqtt.eclipseprojects.io:443/mqtt', 'wss://test.mosquitto.org:8081/mqtt'];
   // tcwt10: aláírt üzenetek. A régebbi (aláírás nélküli) változatok más csatornán vannak, nem keverednek.
   const PREFIX = 'tcwt10/', OLD_PREFIX = 'tcwt9/';
   const KDF_SALT = 'trash2gether-room-v9';
@@ -173,7 +176,15 @@
   let goneMsg = '', byeMsg = '', byeAt = 0, navIntent = 0;
   const expect = { play: 0, pause: 0, seek: 0 };
   let expectTimer = null;
-  const nextFrame = f => (document.hidden ? setTimeout(f, 30) : requestAnimationFrame(f));
+  // A következő képkockánál rajzolunk; de ha a böngésző épp nem rajzol (pl. teljesen eltakart ablak, beágyazott
+  // panel), a requestAnimationFrame nem fut le – ilyenkor időzítő a tartalék, hogy a lista azért frissüljön.
+  const nextFrame = f => {
+    if (document.hidden) { setTimeout(f, 30); return; }
+    let done = false;
+    const run = () => { if (!done) { done = true; f(); } };
+    requestAnimationFrame(run);
+    setTimeout(run, 150);
+  };
   function expectEv(k) {
     expect[k] = 1;
     clearTimeout(expectTimer);
@@ -1238,6 +1249,19 @@
     setTimeout(() => showToast([icon('arrow-right-circle'), h('span', { text: ' Új Trash2Gether: ' + sv + ' (neked ' + SCRIPT_VERSION + ' van) – ' }),
       h('a', { href: UPDATE_URL, target: '_blank', rel: 'noopener', text: 'Frissítés', style: 'color:inherit;font-weight:700;text-decoration:underline' })], 9000, 'upd'), 1500);
   }
+  // Aki végakarat nélkül tűnt el (összeomlott vagy elaludt a gép, vagy olyan szerveren volt, ami nem küldi el),
+  // ne maradjon örökre a listán: minden lap 5 percenként frissíti a jelenlétét, 16 perc csend után kilépettnek
+  // vesszük. A saját óránkkal mérünk (a másik gép órája eltérhet).
+  const STALE_MS = 16 * 60000;
+  let staleTick = Date.now();
+  setInterval(() => {
+    const now = Date.now(), slept = now - staleTick > 3 * 60000;
+    staleTick = now;
+    if (!room) return;
+    // Ha mi aludtunk (pl. a gép alvó módban volt), nem ők hallgattak: újraindítjuk az órájukat.
+    if (slept) { members.forEach(mm => { if (mm.rx) mm.rx = now; }); return; }
+    [...members].forEach(([psid, mm]) => { if (mm.rx && now - mm.rx > STALE_MS) onPresence(psid, null, mm.c, null); });
+  }, 60000);
   function onPresence(psid, m, signer, goneVia) {
     if (psid === sid) { if (m && signer !== cid) fixOwnPresence(); return; }
     if (!/^[a-z0-9]{1,20}$/.test(psid)) return;
@@ -1265,7 +1289,7 @@
     const was = deviceOnline(c);
     if (m) {
       const mvMs = typeof m.mv === 'number' && isFinite(m.mv) ? Math.min(Math.max(m.mv, 0), 60000) : 0;
-      members.set(psid, { c: c.slice(0, 20), n: cleanName(m.n), hc: typeof m.hc === 'string' ? m.hc.slice(0, 20) : null, v: videoPath(m.v), ui: validUi(m.ui), t: clean(m.t || '', TITLE_MAX), u: safePath(m.u), j: +m.j || 0, a: !!m.a, tb: typeof m.tb === 'string' ? m.tb.slice(0, 20) : null, mv: mvMs ? Date.now() + mvMs : 0, ld: !!m.ld, at: m.at, br: Number.isInteger(m.br) ? m.br & ((1 << BROKERS.length) - 1) : 0 });
+      members.set(psid, { c: c.slice(0, 20), n: cleanName(m.n), hc: typeof m.hc === 'string' ? m.hc.slice(0, 20) : null, v: videoPath(m.v), ui: validUi(m.ui), t: clean(m.t || '', TITLE_MAX), u: safePath(m.u), j: +m.j || 0, a: !!m.a, tb: typeof m.tb === 'string' ? m.tb.slice(0, 20) : null, mv: mvMs ? Date.now() + mvMs : 0, ld: !!m.ld, at: m.at, rx: Date.now(), br: Number.isInteger(m.br) ? m.br & ((1 << BROKERS.length) - 1) : 0 });
       dropGhost(c);
       noteVersion(m.sv);
     } else {

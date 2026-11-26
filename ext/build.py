@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Trash2Gether böngészőbővítmény építése a userscriptből.
 
-Használat:  python3 build.py [userscript.user.js] [kimeneti mappa]
+Használat:  python3 ext/build.py [userscript.user.js] [kimeneti mappa]   (alapból: ../trash2gether.user.js -> ext/dist)
 Eredmény:   <kimenet>/chrome/  és  <kimenet>/firefox/  (kicsomagolva, betölthető)
             <kimenet>/trash2gether-chrome.zip, <kimenet>/trash2gether-firefox.zip
 
@@ -12,7 +12,7 @@ a törzse változatlanul kerül a bővítménybe. Az mqtt.js ugyanaz a fájl, am
 import hashlib, json, os, re, shutil, sys, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, '..', 'trashcity-watch-together.user.js')
+SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, '..', 'trash2gether.user.js')
 OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, 'dist')
 MQTT = os.path.join(HERE, 'mqtt.min.js')
 ICONS = os.path.join(HERE, 'icons')
