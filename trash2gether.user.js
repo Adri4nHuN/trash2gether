@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.4
+// @version      1.5
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -26,10 +26,13 @@
   de.setAttribute('data-trash2gether', '');
 
   // A fejléc @version sorával egyezzen (a release.py mindkettőt egyszerre írja át).
-  const SCRIPT_VERSION = '1.4';
+  const SCRIPT_VERSION = '1.5';
   // Ha valaki a szobában újabb változatot használ, felajánljuk a frissítést. A Tampermonkey a .user.js címet
   // megnyitva rögtön a frissítő oldalát mutatja; a bővítmény-kiadásban ez a projekt oldalára mutat (build.py).
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
+  // Saját frissítés-figyelés: a Tampermonkey alapból csak naponta egyszer néz rá, ezért mi is megnézzük (legfeljebb
+  // félóránként) a kiadott fejlécet, és ha újabb van, szólunk egy kattintható értesítéssel.
+  const META_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.meta.js';
   // Több nyilvános MQTT szerverre kapcsolódunk egyszerre, és mindegyikre ugyanazt küldjük; elég, ha kettőnek van
   // közös szervere. A népszerű HaGeZi DNS-/reklámszűrő listák (Pi-hole, AdGuard Home, NextDNS, uBlock Origin-be
   // importálva) tiltják a broker.emqx.io-t (és a HiveMQ-t is), aki ilyet használ, a többin át van a szobában.
@@ -109,11 +112,12 @@
   const store = mk(() => localStorage);
   const sess = mk(() => sessionStorage);
   // videókártyák adatai (lásd parseVideoPage)
-  const VI_KEY = 'tcwt_vi', VI_MAX = 40;
+  const VI_KEY = 'tcwt_vi2', VI_MAX = 40;   // 2: a megtekintésszám a saját dobozból (a régi néha az oldalsávból jött)
+  try { sessionStorage.removeItem('tcwt_vi'); } catch (e) {}
   let vinfo = readSessJSON(VI_KEY);
   if (!vinfo || typeof vinfo !== 'object' || Array.isArray(vinfo)) vinfo = {};
-  let viBudget = 4;
-  const viPending = new Set(), cardRec = new WeakMap();
+  const viPending = new Set(), viWait = [], cardRec = new WeakMap();
+  let viLeft = 16, viActive = 0;
 
   const rand = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => (b % 36).toString(36)).join('');
   const vidId = p => String(p || '').match(/^\/video\/(\d+)/)?.[1] || null;
@@ -1261,6 +1265,22 @@
     setTimeout(() => showToast([icon('arrow-right-circle'), h('span', { text: ' Új Trash2Gether: ' + sv + ' (neked ' + SCRIPT_VERSION + ' van) – ' }),
       h('a', { href: UPDATE_URL, target: '_blank', rel: 'noopener', text: 'Frissítés', style: 'color:inherit;font-weight:700;text-decoration:underline' })], 9000, 'upd'), 1500);
   }
+  function checkUpdate() {
+    const known = store.get('tcwt_updnew');
+    if (known && newerVer(known, SCRIPT_VERSION)) noteVersion(known);
+    const last = +store.get('tcwt_updchk') || 0;
+    if (Math.abs(Date.now() - last) < 30 * 60000) return;
+    store.set('tcwt_updchk', String(Date.now()));
+    fetch(META_URL + '?t=' + Math.floor(Date.now() / 60000), { cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' })
+      .then(r => (r.ok ? r.text() : ''))
+      .then(t => {
+        const v = (/^\/\/\s*@version\s+(\S+)/m.exec(t.slice(0, 4000)) || [])[1];
+        if (!verParts(v)) return;
+        if (newerVer(v, SCRIPT_VERSION)) { store.set('tcwt_updnew', v); noteVersion(v); } else store.del('tcwt_updnew');
+      })
+      .catch(() => {});
+  }
+  setTimeout(checkUpdate, 4000);
   // Aki végakarat nélkül tűnt el (összeomlott vagy elaludt a gép, vagy olyan szerveren volt, ami nem küldi el),
   // ne maradjon örökre a listán: minden lap 5 percenként frissíti a jelenlétét, 16 perc csend után kilépettnek
   // vesszük. A saját óránkkal mérünk (a másik gép órája eltérhet).
@@ -2273,6 +2293,13 @@ header .x.off{opacity:.5}
 .qinfo:hover .qtitle{text-decoration:underline}
 .qtitle{font:600 12.5px/1.3 var(--body);color:var(--tx);overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2}
 .qmeta{font:500 11.5px/1.3 var(--body);color:var(--mu)}
+.mq{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}
+.mq .mqi{display:inline-block;white-space:nowrap}
+.mq.run{text-overflow:clip;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 6px,#000 calc(100% - 10px),transparent);mask-image:linear-gradient(90deg,transparent 0,#000 6px,#000 calc(100% - 10px),transparent)}
+.mq.run .mqi{animation:t2gmq var(--mqt,6s) ease-in-out infinite alternate;will-change:transform}
+.mq.run:hover .mqi{animation-play-state:paused}
+@keyframes t2gmq{0%,18%{transform:translateX(0)}82%,100%{transform:translateX(var(--mq,0))}}
+@media (prefers-reduced-motion:reduce){.mq.run{text-overflow:ellipsis;-webkit-mask-image:none;mask-image:none}.mq.run .mqi{animation:none;display:inline}}
 .qacts{display:flex;gap:2px;flex:none}
 .qb{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:transparent;color:var(--tx);border:0;padding:0;cursor:pointer}
 .qb:hover{background:var(--s2)}
@@ -2689,9 +2716,13 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   function qRow(it, mode, idx) {
     const img = h('img', { class: 'qthumb', alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'same-origin', src: location.origin + '/media/videos/tmb/' + it.id + '/default.jpg' });
     img.addEventListener('error', () => { img.style.visibility = 'hidden'; });
-    const meta = [it.d ? fmtTime(it.d) : '', mode === 'q' && it.by ? it.by : ''].filter(Boolean).join(' · ');
+    if (mode === 'q' && !(vinfo[it.id] && vinfo[it.id].ok)) wantVideoInfo(it.id, true);
+    const vi = vinfo[it.id] || {};
+    const d = it.d || vi.d;
+    const meta = [d ? fmtTime(d) : '', vi.views != null && isFinite(vi.views) ? vi.views.toLocaleString('hu-HU') + ' megtekintés' : '', vi.u || '',
+      mode === 'q' && it.by ? 'javasolta: ' + it.by : ''].filter(Boolean).join(' · ');
     const info = h('a', { class: 'qinfo', href: location.origin + it.p, target: '_blank', rel: 'noopener', title: it.t + ' – megnyitás új lapon' },
-      h('div', { class: 'qtitle', text: (mode === 'q' ? (idx + 1) + '. ' : '') + it.t }), meta ? h('div', { class: 'qmeta', text: meta }) : null);
+      h('div', { class: 'qtitle', text: (mode === 'q' ? (idx + 1) + '. ' : '') + it.t }), meta ? marq('qmeta', meta) : null);
     const acts = h('div', { class: 'qacts' });
     if (mode === 'res') {
       const done = inQueue(it.id);
@@ -3356,24 +3387,68 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (ids.length > VI_MAX) ids.sort((a, b) => (vinfo[a].at || 0) - (vinfo[b].at || 0)).slice(0, ids.length - VI_MAX).forEach(k => delete vinfo[k]);
     sess.set(VI_KEY, JSON.stringify(vinfo));
     refreshCards(id);
+    if (inQueue(id)) renderQueue();
   }
+  // Futószalag: ha egy információs sor nem fér ki, oda-vissza lassan végigfut (rámutatva megáll). Csak akkor
+  // indul, ha tényleg kilóg; a mozgást kérő-kerülő beállításnál marad a „…”-os levágás.
+  const mqObs = typeof ResizeObserver === 'function' ? new ResizeObserver(es => es.forEach(e => fitMarq(e.target))) : null;
+  function fitMarq(el) {
+    if (!el.isConnected) { mqObs.unobserve(el); return; }
+    const w = el.clientWidth, inner = el.firstElementChild;
+    if (!w || !inner) return;
+    const over = Math.ceil(inner.scrollWidth - w);
+    if (over > 3) {
+      el.style.setProperty('--mq', -over + 'px');
+      el.style.setProperty('--mqt', (4 + over / 22).toFixed(1) + 's');
+      el.classList.add('run');
+    } else el.classList.remove('run');
+  }
+  function marq(cls, text) {
+    const el = h('div', { class: cls + ' mq', title: text }, h('span', { class: 'mqi', text }));
+    if (mqObs) mqObs.observe(el);
+    return el;
+  }
+  // A videó saját adatai a lejátszó alatti .card-sub dobozban vannak (feltöltő, megtekintés, kor); az oldalsáv
+  // ajánlott videóinál is van szem-ikon és „… ezelőtt”, ezért csak ebben a dobozban keresünk.
   function parseVideoPage(html) {
-    const d = new DOMParser().parseFromString(html, 'text/html');
+    const d = typeof html === 'string' ? new DOMParser().parseFromString(html, 'text/html') : html;
     const tags = [...d.querySelectorAll('meta[property="video:tag"]')].map(m => clean(m.content || '', 30).trim()).filter(Boolean).slice(0, 5);
-    const up = d.querySelector('a[href^="/user/"] .bold');
-    const eye = d.querySelector('i.bi-eye-fill');
+    const sub = d.querySelector('.content-left .card-sub') || d.querySelector('.card-sub');
+    const up = sub && sub.querySelector('a[href^="/user/"] .bold');
+    const eye = sub && sub.querySelector('i.fa-eye, i.bi-eye-fill');
     const vm = eye && eye.parentElement ? /(\d[\d\s.]{0,12})/.exec(eye.parentElement.textContent) : null;
-    const am = /(\d{1,4}\s+(?:másodperc|perc|órá|óra|nap|hét|het|hónap|év)\S*\s+ezelőtt)/.exec(d.body ? d.body.textContent : '');
-    return { ok: 1, tags, u: up ? clean(up.textContent.trim(), 40) : '', views: vm ? +vm[1].replace(/\D/g, '') : null, age: am ? am[1].replace(/\s+/g, ' ') : '' };
+    const am = sub ? /(\d{1,4}\s+(?:másodperc|perc|órá|óra|nap|hét|het|hónap|év)\S*\s+ezelőtt)/.exec(sub.textContent) : null;
+    const num = sel => { const e = d.querySelector(sel); const n = e ? parseInt(e.textContent.replace(/\D/g, ''), 10) : NaN; return isFinite(n) ? n : null; };
+    return { ok: 1, tags, u: up ? clean(up.textContent.trim(), 40) : '', views: vm ? +vm[1].replace(/\D/g, '') : null, age: am ? am[1].replace(/\s+/g, ' ') : '',
+      lk: num('[id^="likes_video_"]'), dl: num('[id^="dislikes_video_"]') };
   }
-  function wantVideoInfo(id) {
-    if (!id || (vinfo[id] && vinfo[id].ok) || viPending.has(id) || viBudget <= 0) return;
-    viBudget--; viPending.add(id);
-    fetch(location.origin + '/video/' + id, { credentials: 'same-origin' })
-      .then(r => (r.ok ? r.text() : null))
-      .then(html => { if (html) viSet(id, parseVideoPage(html)); })
-      .catch(() => {})
-      .finally(() => viPending.delete(id));
+  // Lekérési sor: egyszerre legfeljebb kettő, oldalanként legfeljebb 16. A chat kártyái előre kerülnek (a legújabb
+  // az első, mert a chat régitől újig rajzolódik), a videósor elemei a végére. Sikertelen lekérést fél perc múlva
+  // még egyszer megpróbálunk. Az épp nyitott videó adatait magából az oldalból olvassuk, letöltés nélkül.
+  const viFail = new Map();
+  function wantVideoInfo(id, low) {
+    if (!/^\d{1,10}$/.test(id || '') || (vinfo[id] && vinfo[id].ok) || viPending.has(id)) return;
+    if (id === vidId(VPATH) && document.body) {
+      let r = null; try { r = parseVideoPage(document); } catch (e) {}
+      if (r && (r.u || r.tags.length || r.views != null)) { viSet(id, r); return; }
+    }
+    const f = viFail.get(id);
+    if (f && (f.n >= 2 || Date.now() - f.at < 30000)) return;
+    viPending.add(id);
+    if (low) viWait.push(id); else viWait.unshift(id);
+    viPump();
+  }
+  function viPump() {
+    while (viActive < 2 && viWait.length && viLeft > 0) {
+      const id = viWait.shift();
+      viLeft--; viActive++;
+      fetch(location.origin + '/video/' + id, { credentials: 'same-origin' })
+        .then(r => (r.ok ? r.text() : null))
+        .then(html => { if (!html) throw 0; viFail.delete(id); viSet(id, parseVideoPage(html)); })
+        .catch(() => { const f = viFail.get(id) || { n: 0 }; viFail.set(id, { n: f.n + 1, at: Date.now() }); })
+        .finally(() => { viPending.delete(id); viActive--; viPump(); });
+    }
+    if (viLeft <= 0) { viWait.forEach(id => viPending.delete(id)); viWait.length = 0; }
   }
   function refreshCards(id) {
     const keep = stick;
@@ -3388,9 +3463,10 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (i.views != null && isFinite(i.views)) parts.push(i.views.toLocaleString('hu-HU') + ' megtekintés');
     if (i.u) parts.push(i.u);
     if (i.age) parts.push(i.age);
+    if (i.lk != null || i.dl != null) parts.push('👍 ' + (i.lk || 0) + ' 👎 ' + (i.dl || 0));
     const kids = [];
-    if (parts.length) kids.push(h('div', { class: 'smeta', text: parts.join(' · ') }));
-    if (Array.isArray(i.tags) && i.tags.length) kids.push(h('div', { class: 'stags', text: i.tags.map(t => '#' + t).join(' ') }));
+    if (parts.length) kids.push(marq('smeta', parts.join(' · ')));
+    if (Array.isArray(i.tags) && i.tags.length) kids.push(marq('stags', i.tags.map(t => '#' + t).join(' ')));
     return kids;
   }
   function sysNode(r) {
@@ -3401,8 +3477,8 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const tm = r.ts ? new Date(r.ts).toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' }) : '';
     const img = h('img', { class: 'sthumb', alt: '', decoding: 'async', referrerpolicy: 'same-origin', src: location.origin + '/media/videos/tmb/' + vid + '/default.jpg' });
     img.addEventListener('error', () => img.remove());
+    if (!(vinfo[vid] && vinfo[vid].ok)) wantVideoInfo(vid);   // a saját videónál azonnal megvan
     const meta = cardMeta(vid);
-    if (!meta) wantVideoInfo(vid);
     const kids = [img, h('div', { class: 'sinfo' }, h('div', { class: 'scap', text: 'Új videó' + (tm ? ' · ' + tm : '') }), h('div', { class: 'stitle', text: title }), meta || [])];
     const node = path
       ? h('a', { class: 'sys svid', 'data-vid': vid, href: location.origin + path, target: '_blank', rel: 'noopener', title: title + ' – megnyitás új lapon' }, ...kids)
