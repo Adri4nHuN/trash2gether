@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.17
+// @version      1.18
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -26,7 +26,7 @@
   de.setAttribute('data-trash2gether', '');
 
   // A fejléc @version sorával egyezzen (a release.py mindkettőt egyszerre írja át).
-  const SCRIPT_VERSION = '1.17';
+  const SCRIPT_VERSION = '1.18';
   // Ha valaki a szobában újabb változatot használ, felajánljuk a frissítést. A Tampermonkey a .user.js címet
   // megnyitva rögtön a frissítő oldalát mutatja; a bővítmény-kiadásban ez a projekt oldalára mutat (build.py).
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
@@ -3662,7 +3662,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     renderBans();
     let txt = '', cap = '', mode = '';
     if (isHost && roomV && !sameVideo(roomV, VPATH)) { txt = '👑 Te vagy a host.'; cap = 'A szoba videója:'; mode = 'go'; }
-    else if (isHost) txt = VPATH ? '👑 Te vagy a host.' : '👑 Te vagy a host – nyiss meg egy videót.';
+    else if (isHost) txt = '👑 Te vagy a host.';
     else if (roomV && !isLead() && sameVideo(roomV, VPATH)) { txt = 'Másik lapon nézed.'; mode = 'here'; }
     else if (roomV && !sameVideo(roomV, VPATH)) { cap = isLead() ? 'A host ezt nézi:' : 'Másik lapon ezt nézed:'; mode = 'go'; }
     setText(hostTxt, txt);
