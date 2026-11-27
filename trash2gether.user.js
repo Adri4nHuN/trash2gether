@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.16
+// @version      1.17
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -26,7 +26,7 @@
   de.setAttribute('data-trash2gether', '');
 
   // A fejléc @version sorával egyezzen (a release.py mindkettőt egyszerre írja át).
-  const SCRIPT_VERSION = '1.16';
+  const SCRIPT_VERSION = '1.17';
   // Ha valaki a szobában újabb változatot használ, felajánljuk a frissítést. A Tampermonkey a .user.js címet
   // megnyitva rögtön a frissítő oldalát mutatja; a bővítmény-kiadásban ez a projekt oldalára mutat (build.py).
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
@@ -2299,8 +2299,14 @@ button{font:inherit;color:inherit;cursor:pointer;border:0}
   box-shadow:var(--shadow);overflow:hidden}
 .rz{position:absolute;z-index:5;touch-action:none}
 .rz-l{left:0;top:0;bottom:0;width:7px;cursor:ew-resize}
+.rz-r{right:0;top:0;bottom:0;width:7px;cursor:ew-resize}
 .rz-t{left:0;right:0;top:0;height:7px;cursor:ns-resize}
-.rz-tl{left:0;top:0;width:16px;height:16px;cursor:nwse-resize;z-index:6}
+.rz-b{left:0;right:0;bottom:0;height:7px;cursor:ns-resize}
+.rz-tl,.rz-tr,.rz-bl,.rz-br{width:16px;height:16px;z-index:6}
+.rz-tl{left:0;top:0;cursor:nwse-resize}
+.rz-br{right:0;bottom:0;cursor:nwse-resize}
+.rz-tr{right:0;top:0;cursor:nesw-resize}
+.rz-bl{left:0;bottom:0;cursor:nesw-resize}
 .rz:hover{background:var(--btnsoft)}
 .code-in{text-transform:uppercase;letter-spacing:2px;font-family:ui-monospace,Consolas,monospace}
 .dragging,.dragging *{user-select:none!important}
@@ -3215,7 +3221,9 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   shadow.addEventListener('pointerdown', e => { if (notePop && notePop.isConnected && !e.composedPath().includes(notePop) && !e.composedPath().includes(noteBtn)) toggleNote(false); });
   const headEl = h('header', { title: 'Húzd a mozgatáshoz · dupla katt: alaphelyzet' },
     logoEl, connChip, h('div', { class: 'hsp' }), noteBtn, floatBtn, btn('x', 'x-lg', '', { 'aria-label': 'Bezár', onclick: () => togglePanel(false) }));
-  const rzL = h('div', { class: 'rz rz-l' }), rzT = h('div', { class: 'rz rz-t' }), rzTL = h('div', { class: 'rz rz-tl' });
+  // méretezés mind a 4 oldalon és mind a 4 sarokban: [osztály, vízszintes irány, függőleges irány] (-1: bal/fent, 1: jobb/lent)
+  const RZ = [['l', -1, 0], ['r', 1, 0], ['t', 0, -1], ['b', 0, 1], ['tl', -1, -1], ['tr', 1, -1], ['bl', -1, 1], ['br', 1, 1]];
+  const rzEls = RZ.map(([k, dx, dy]) => { const el = h('div', { class: 'rz rz-' + k }); el.addEventListener('pointerdown', e => startResize(e, dx, dy)); return el; });
   const chatCnt = h('span', { class: 'cnt' }), roomNum = h('span', { class: 'num' });
   const tabRoom = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: () => setView('room') }, icon('people-fill'), h('span', { text: 'Szoba' }), roomNum);
   const tabChat = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: () => setView('chat') }, icon('chat-dots-fill'), h('span', { text: 'Chat' }), chatCnt);
@@ -3228,7 +3236,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   });
   let view = store.get('tcwt_view') === 'room' ? 'room' : 'chat';
   const panel = h('section', { class: 'panel' },
-    rzL, rzT, rzTL,
+    ...rzEls,
     headEl,
     setupEl, tabsEl, statusEl, liveEl, chatEl);
   const dock = h('div', { class: 'dock', hidden: 'hidden' }, epanel, panel);
@@ -3409,28 +3417,39 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   addEventListener('resize', clampSize);
   try { document.fonts.addEventListener('loadingdone', () => clampSize()); } catch (e) {}
 
-  function startResize(e, horiz, vert) {
+  // A panel helye a képernyő jobb és alsó szélétől számít: bal/felső oldalon a méret változik, a jobb/alsó
+  // szélnél viszont a szemközti oldal marad a helyén, ezért a hely is vele mozog (és nem lóg ki a képernyőről).
+  function startResize(e, dx, dy) {
     if (isMobile() || e.button > 0) return;
     e.preventDefault();
-    const r = panel.getBoundingClientRect(), sx = e.clientX, sy = e.clientY;
+    const r = panel.getBoundingClientRect(), rc = dock.getBoundingClientRect(), sx = e.clientX, sy = e.clientY;
+    const r0 = innerWidth - rc.right, b0 = innerHeight - rc.bottom;
     const handle = e.currentTarget;
     handle.setPointerCapture(e.pointerId);
     panel.classList.add('dragging');
-    const move = ev => setSize(horiz ? r.width - (ev.clientX - sx) : r.width, vert ? r.height - (ev.clientY - sy) : r.height);
+    const move = ev => {
+      let w = r.width + dx * (ev.clientX - sx), hh = r.height + dy * (ev.clientY - sy);
+      if (dx > 0) w = Math.min(w, r.width + r0 - 8);
+      if (dy > 0) hh = Math.min(hh, r.height + b0 - 8);
+      if (dx > 0 || dy > 0) pos = { r: r0, b: b0 };
+      setSize(dx ? w : r.width, dy ? hh : r.height);
+      if (dx > 0 || dy > 0) {
+        pos = { r: dx > 0 ? r0 - (size.w - r.width) : r0, b: dy > 0 ? b0 - (size.h - r.height) : b0 };
+        clampPos();
+      }
+    };
     const up = () => {
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', up);
       handle.removeEventListener('pointercancel', up);
       panel.classList.remove('dragging');
       if (size) store.set('tcwt_size', JSON.stringify(size));
+      if (pos) store.set('tcwt_pos', JSON.stringify(pos));
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', up);
     handle.addEventListener('pointercancel', up);
   }
-  rzL.addEventListener('pointerdown', e => startResize(e, true, false));
-  rzT.addEventListener('pointerdown', e => startResize(e, false, true));
-  rzTL.addEventListener('pointerdown', e => startResize(e, true, true));
   function updateMore() {
     liveEl.classList.toggle('more', liveEl.scrollHeight - liveEl.scrollTop - liveEl.clientHeight > 4);
   }
@@ -3467,7 +3486,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     pos = null; store.del('tcwt_pos'); clampPos();
   });
 
-  [rzL, rzT, rzTL].forEach(el => el.addEventListener('dblclick', () => {
+  rzEls.forEach(el => el.addEventListener('dblclick', () => {
     size = null; store.del('tcwt_size');
     panel.style.removeProperty('--pw'); panel.style.removeProperty('--ph');
   }));
