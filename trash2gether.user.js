@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.19
+// @version      1.20
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -26,7 +26,7 @@
   de.setAttribute('data-trash2gether', '');
 
   // A fejléc @version sorával egyezzen (a release.py mindkettőt egyszerre írja át).
-  const SCRIPT_VERSION = '1.19';
+  const SCRIPT_VERSION = '1.20';
   // Ha valaki a szobában újabb változatot használ, felajánljuk a frissítést. A Tampermonkey a .user.js címet
   // megnyitva rögtön a frissítő oldalát mutatja; a bővítmény-kiadásban ez a projekt oldalára mutat (build.py).
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
@@ -164,8 +164,37 @@
   function pageLabel() {
     const p = location.pathname.replace(/\/+$/, '');
     if (!p) return 'Kezdőlap';
-    const u = p.match(/^\/user\/([^/]+)$/);
-    if (u) { try { return decodeURIComponent(u[1]) + ' profilja'; } catch (e) {} }
+    // Profiloldalak (bárkié): /user[/<név>][/videos|/albums|/favorite/videos|/favorite/photos]. A saját profil
+    // /user címen is elérhető: ott a név a fiókodból (vagy az oldal címéből) jön.
+    const u = p.match(/^\/user(?:\/([^/]+))?(\/.*)?$/);
+    if (u) {
+      let n = '';
+      try { n = u[1] ? decodeURIComponent(u[1]) : ''; } catch (e) {}
+      if (!u[1]) n = (acct && acct.name) || ((/^(.+?) profilja\b/.exec(document.title) || [])[1] || '').trim();
+      const sub = u[1] ? (u[2] || '') : '';
+      const tab = !sub ? ' profilja' : /^\/videos(\/|$)/.test(sub) ? ' - Videók' : /^\/albums(\/|$)/.test(sub) ? ' - Képek'
+        : /^\/favorite\/videos(\/|$)/.test(sub) ? ' - Kedvenc videók' : /^\/favorite\/photos(\/|$)/.test(sub) ? ' - Kedvenc képek' : '';
+      if (n && tab && !RESERVED.test(n)) return cut(n.trim(), 60) + tab;
+    }
+    // Kategória: /videos/<kategória> → „Alkesz Mobil videók”, /albums/<kategória> → „Alkesz Mobil albumok”;
+    // a kategória nélküliek: „Kategória nélküli videók / albumok”. A nevet az oldal saját linkjéből vesszük.
+    const c = p.match(/^\/(videos|albums)\/([^/]+)/);
+    if (c) {
+      const kind = c[1] === 'videos' ? 'videók' : 'albumok';
+      if (/kategoria-nelkul/i.test(c[2])) return 'Kategória nélküli ' + kind;
+      // több link is ide mutat („Összes” szűrő, a kategória neve): azt választjuk, amelyik a lap címében is szerepel
+      const cands = [];
+      for (const a of document.querySelectorAll('a[href]')) {
+        let ap = ''; try { ap = new URL(a.getAttribute('href'), location.origin).pathname.replace(/\/+$/, ''); } catch (e) { continue; }
+        if (ap !== '/' + c[1] + '/' + c[2]) continue;
+        const tx = a.textContent.replace(/\s+/g, ' ').trim().replace(/\s+\d+$/, '');
+        if (tx && !cands.includes(tx)) cands.push(tx);
+      }
+      const named = cands.filter(x => !/^(\d+|Összes|Mindent mutat|Videók|Képek|Albumok|Kategóriák|Kiemelt|Véletlenszerű|Éppen nézett|Hozzáadva\b.*|Leg\S+(\s.*)?)$/i.test(x));
+      let nm = named.find(x => document.title.includes(x)) || named[0] || '';
+      if (!nm) nm = ((/^(?:Legújabb|Legnézettebb|Legjobb|Legnépszerűbb|Leghosszabb|Kiemelt|Véletlenszerű)?\s*(.+?)\s+(?:Videók|Albumok)\s+-\s+Trash City$/i.exec(document.title) || [])[1] || '');
+      if (nm) return cut(nm.replace(/^[.…\s]+/, ''), 80) + ' ' + kind;
+    }
     const h1 = document.querySelector('.well-filters h1');
     const t = h1 && h1.textContent.replace(/\s+/g, ' ').trim();
     return cut(t || pageTitle(), TITLE_MAX);
@@ -482,7 +511,7 @@
     if (modArmed) { clearTimeout(modArmed.t); modArmed = null; }
     members.clear(); ownTabs.clear(); kickedAt.clear(); lastAt.clear(); presAt.clear(); chatRate.clear(); devSeen.clear(); joinedAt = 0; oldNoted = false;
     hostCands.clear(); authWait.ban.clear(); authWait.cfg.clear(); authWait.q.clear(); stateWait = null;
-    queue = []; qV = 0; qPend = [];
+    queue = []; qV = 0; qId = ''; qPend = [];
     resetRate();
     if (baseRate !== 1) { const v = getVideo(); if (v) setRate(v, 1); baseRate = 1; }
     clearTimeout(stallTimer); stalled = false; holdShown = false;
@@ -627,7 +656,7 @@
       const keepSet = new Set([keep, act && act.code].filter(Boolean));
       const drop = [];
       for (let i = 0; i < localStorage.length; i++) {
-        const mm = /^tcwt_(?:chatlast|j|host|lead|k)_(.+)$/.exec(localStorage.key(i) || '');
+        const mm = /^tcwt_(?:chatlast|j|host|lead|k|qp)_(.+)$/.exec(localStorage.key(i) || '');
         if (mm && !keepSet.has(mm[1])) drop.push(mm[0]);
       }
       drop.forEach(k => store.del(k));
@@ -1305,6 +1334,14 @@
     setTimeout(() => showToast([icon('arrow-right-circle'), h('span', { text: ' Új Trash2Gether: ' + sv + ' (neked ' + SCRIPT_VERSION + ' van) – ' }),
       h('a', { href: UPDATE_URL, target: '_blank', rel: 'noopener', text: 'Frissítés', style: 'color:inherit;font-weight:700;text-decoration:underline' })], 9000, 'upd'), 1500);
   }
+  // Más tagok verziója csak jelzés: a jelenlétet bárki módosíthatja, ezért ilyenkor mi magunk nézzük meg a kiadott
+  // verziót (legfeljebb 10 percenként), és csak azt fogadjuk el.
+  let peerCheckAt = 0;
+  function peerVersion(sv) {
+    if (!newerVer(sv, availVer || SCRIPT_VERSION) || Date.now() - peerCheckAt < 10 * 60000) return;
+    peerCheckAt = Date.now();
+    checkUpdate(true);
+  }
   function checkUpdate(force, done) {
     const known = store.get('tcwt_updnew');
     if (known && newerVer(known, SCRIPT_VERSION)) noteVersion(known);
@@ -1365,7 +1402,7 @@
       const mvMs = typeof m.mv === 'number' && isFinite(m.mv) ? Math.min(Math.max(m.mv, 0), 60000) : 0;
       members.set(psid, { no: cleanNote(m.no), c: c.slice(0, 20), n: cleanName(m.n), hc: typeof m.hc === 'string' ? m.hc.slice(0, 20) : null, v: videoPath(m.v), ui: validUi(m.ui), t: clean(m.t || '', TITLE_MAX), u: safePath(m.u), j: +m.j || 0, a: !!m.a, tb: typeof m.tb === 'string' ? m.tb.slice(0, 20) : null, mv: mvMs ? Date.now() + mvMs : 0, ld: !!m.ld, at: m.at, rx: Date.now(), sv: typeof m.sv === 'string' ? m.sv.slice(0, 20) : '', br: Number.isInteger(m.br) ? m.br & ((1 << BROKERS.length) - 1) : 0 });
       dropGhost(c);
-      noteVersion(m.sv);
+      peerVersion(m.sv);
     } else {
       members.delete(psid);
       if (old.mv > Date.now()) addGhost(c, old, old.mv - Date.now());
@@ -1542,7 +1579,7 @@
   // videó a listán marad (csak a törlés veszi le), és ki van emelve; az automatikus továbblépés az utána következőt
   // indítja, ha az épp menő nincs a listán, akkor a lista elsőjét.
   const Q_MAX = 30, QUEUE_SINCE = '1.4';
-  let queue = [], qV = 0;
+  let queue = [], qV = 0, qId = '';   // qId: ki írta a lista ezen változatát (egyforma verziónál ez dönt, mindenkinél ugyanúgy)
   function qItem(x) {
     if (!x || typeof x !== 'object') return null;
     const id = typeof x.id === 'string' && /^\d{1,10}$/.test(x.id) ? x.id : null;
@@ -1559,13 +1596,14 @@
     location.href = location.origin + it.p + (it.s ? '?t=' + it.s : '');
   }
   const inQueue = id => queue.some(x => x.id === id);
-  function saveQueue() { if (room) sess.set('tcwt_q_' + room, JSON.stringify({ v: qV, list: queue })); }
+  function saveQueue() { if (room) sess.set('tcwt_q_' + room, JSON.stringify({ v: qV, o: qId, list: queue })); }
   function loadQueue(code) {
     const o = readSessJSON('tcwt_q_' + code);
     queue = o && Array.isArray(o.list) ? o.list.map(qItem).filter(Boolean).slice(0, Q_MAX) : [];
     qV = o && okVer(o.v) ? o.v : 0;
+    qId = o && typeof o.o === 'string' ? o.o.slice(0, 20) : '';
   }
-  const queueMsg = () => ({ id: sid, c: cid, list: queue, v: qV });
+  const queueMsg = () => ({ id: sid, c: cid, list: queue, v: qV, o: qId || sid });
   let qFixTimer = null;
   // Korlátozáskor a nézők hozzáadása csak kérés: a host gépén gyűlik (a host minden lapja látja, a böngésző
   // tárolójában), és a host egyenként jóváhagyja (✓) vagy elveti (✗).
@@ -1602,7 +1640,7 @@
   const canEditQ = () => !!room && (isHost || !!(hostConfirmed && hostRec && hostRec.c === cid));
   function publishQueue() {
     if (!canEditQ()) return;
-    qV = nextVer(qV);
+    qV = nextVer(qV); qId = sid;
     saveQueue();
     publish('q', queueMsg(), true);
     renderMembers();   // a lista és a fenti értesítés („Listán van”) is
@@ -1610,14 +1648,17 @@
   function onQueue(m) {
     if (!m || !Array.isArray(m.list) || m.list.length > Q_MAX || !okVer(m.v)) return;
     if (!hostRec || m._s !== hostRec.c) { waitAuth('q', m); return; }
-    if (m.v < qV) {
+    const oid = typeof m.o === 'string' ? m.o.slice(0, 20) : String(m.id || '').slice(0, 20);
+    const list = m.list.map(qItem).filter(Boolean);
+    if (m.v < qV || (m.v === qV && oid < qId)) {
+      if (JSON.stringify(list) === JSON.stringify(queue)) return;   // ugyanaz a tartalom: nincs teendő
       // régebbi lista érkezett (pl. a host két lapja egyszerre írt, és a régebbi maradt meg a szerveren): ha
       // nálunk újabb van és mi is írhatjuk, újra kiküldjük, hogy a később belépők is a frisset kapják
       if (canEditQ() && !qFixTimer) qFixTimer = setTimeout(() => { qFixTimer = null; if (canEditQ() && qV) publish('q', queueMsg(), true); }, 700);
       return;
     }
-    qV = m.v;
-    queue = m.list.map(qItem).filter(Boolean);
+    qV = m.v; qId = oid;
+    queue = list;
     saveQueue();
     renderMembers();
   }
@@ -2234,7 +2275,7 @@
     store.del('tcwt_chatlast_' + room);
     ['tcwt_room', 'tcwt_hv', 'tcwt_hvt', 'tcwt_went', 'tcwt_follow'].forEach(k => sess.del(k));
     ['chat', 'prevsid', 'hrec', 'lock', 'lockv', 'q', 'bans', 'k', 'known', 'rv'].forEach(k => sess.del('tcwt_' + k + '_' + room));
-    ['k', 'j', 'host'].forEach(k => store.del('tcwt_' + k + '_' + room));
+    ['k', 'j', 'host', 'qp'].forEach(k => store.del('tcwt_' + k + '_' + room));
     keyJobs.delete(room);
     resetRoomState();
     room = ''; roomV = null; roomVT = ''; navigating = false;
