@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.20
+// @version      1.21
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -26,12 +26,14 @@
   de.setAttribute('data-trash2gether', '');
 
   // A fejléc @version sorával egyezzen (a release.py mindkettőt egyszerre írja át).
-  const SCRIPT_VERSION = '1.20';
+  const SCRIPT_VERSION = '1.21';
   // Ha valaki a szobában újabb változatot használ, felajánljuk a frissítést. A Tampermonkey a .user.js címet
   // megnyitva rögtön a frissítő oldalát mutatja; a bővítmény-kiadásban ez a projekt oldalára mutat (build.py).
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
   // Saját frissítés-figyelés: a Tampermonkey alapból csak naponta egyszer néz rá, ezért mi is megnézzük (legfeljebb
   // félóránként) a kiadott fejlécet, és ha újabb van, szólunk egy kattintható értesítéssel.
+  // A GitHub a fájlokat legfeljebb 5 percig gyorsítótárból adja: a verziót a címbe téve mindig a friss jön le.
+  const updLink = v => UPDATE_URL + (/raw\.githubusercontent\.com/.test(UPDATE_URL) && v ? '?v=' + encodeURIComponent(v) : '');
   const META_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.meta.js';
   // Több nyilvános MQTT szerverre kapcsolódunk egyszerre, és mindegyikre ugyanazt küldjük; elég, ha kettőnek van
   // közös szervere. A népszerű HaGeZi DNS-/reklámszűrő listák (Pi-hole, AdGuard Home, NextDNS, uBlock Origin-be
@@ -1332,7 +1334,7 @@
     if (sess.get('tcwt_updoff') === sv) return;   // ebben a böngészőlapban már szóltunk erről a verzióról
     updateOffered = true; sess.set('tcwt_updoff', sv);
     setTimeout(() => showToast([icon('arrow-right-circle'), h('span', { text: ' Új Trash2Gether: ' + sv + ' (neked ' + SCRIPT_VERSION + ' van) – ' }),
-      h('a', { href: UPDATE_URL, target: '_blank', rel: 'noopener', text: 'Frissítés', style: 'color:inherit;font-weight:700;text-decoration:underline' })], 9000, 'upd'), 1500);
+      h('a', { href: updLink(sv), target: '_blank', rel: 'noopener', text: 'Frissítés', style: 'color:inherit;font-weight:700;text-decoration:underline' })], 9000, 'upd'), 1500);
   }
   // Más tagok verziója csak jelzés: a jelenlétet bárki módosíthatja, ezért ilyenkor mi magunk nézzük meg a kiadott
   // verziót (legfeljebb 10 percenként), és csak azt fogadjuk el.
@@ -3296,7 +3298,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   // Verzió a panel jobb alsó sarkában; ha újabb érhető el, kiemelt „Frissítés” gomb. A frissítést a Tampermonkey
   // végzi (egy script magát nem írhatja felül): a gomb a frissítő ablakát nyitja meg, ott egy kattintás.
   const verEl = h('button', { class: 'ver', type: 'button', onclick: () => {
-    if (availVer) { window.open(UPDATE_URL, '_blank', 'noopener'); return; }
+    if (availVer) { window.open(updLink(availVer), '_blank', 'noopener'); return; }
     setText(verEl, 'Keresés…');
     checkUpdate(true, v => {
       paintVer();
