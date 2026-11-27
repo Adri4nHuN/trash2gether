@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.25
+// @version      1.26
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -23,7 +23,7 @@
   window.__trash2gether = true;
   de.setAttribute('data-trash2gether', '');
 
-  const SCRIPT_VERSION = '1.25';
+  const SCRIPT_VERSION = '1.26';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
   const updLink = v => UPDATE_URL + (/raw\.githubusercontent\.com/.test(UPDATE_URL) && v ? '?v=' + encodeURIComponent(v) : '');
   const META_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.meta.js';
@@ -79,11 +79,12 @@
     let count = (text.match(TOKEN) || []).length;
     return text.split(/(\s+)/).map(tok => {
       if (!tok || /^\s+$/.test(tok) || count >= 30) return tok;
-      const sym = SYMBOL_MAP.get(tok);
-      if (sym) { count++; return '[s:' + sym + ']'; }
-      const mm = /^(:[^\s.,!?]+)([.,!?]*)$/.exec(tok);
+      const fm = /^((?:\[f:[0-7]\])*)([\s\S]*?)((?:\[f:[0-7]\])*)$/.exec(tok);
+      const sym = SYMBOL_MAP.get(fm[2]);
+      if (sym) { count++; return fm[1] + '[s:' + sym + ']' + fm[3]; }
+      const mm = /^(:[^\s.,!?[\]]+)([.,!?]*)$/.exec(fm[2]);
       const f = mm && SMILEY_WORDS.get(mm[1].toLowerCase());
-      if (f) { count++; return '[s:' + f + ']' + mm[2]; }
+      if (f) { count++; return fm[1] + '[s:' + f + ']' + mm[2] + fm[3]; }
       return tok;
     }).join('');
   }
@@ -91,33 +92,42 @@
   const NOTE_TEXT_MAX = 80, NOTE_SMILEY_MAX = 6;
   const NOTE_CHAR = /[A-Za-z0-9\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F .,!?:;()'"%+\/&#-]/;
   const NOTE_PART = /(\[(?:s|f):[^\]\s]{1,80}\])/;
-  function noteUnits(raw) {
+  const TEXT_MAX = 300, SMILEY_MAX = 30, MSG_MAX = 1500;
+  const CHAT_CTRL = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]/;
+  const CHAT_OPT = { allow: ch => !CHAT_CTRL.test(ch), textMax: TEXT_MAX, smMax: SMILEY_MAX, keepBad: true };
+  const SHOW_OPT = { ...CHAT_OPT, textMax: MSG_MAX, smMax: 60 }, SHOW_PLAIN = { ...SHOW_OPT, noFmt: true };
+  const NOTE_OPT = { allow: ch => NOTE_CHAR.test(ch), textMax: NOTE_TEXT_MAX, smMax: NOTE_SMILEY_MAX, collapse: true };
+  function richUnits(raw, o) {
     const out = [];
     if (typeof raw !== 'string') return out;
     let f = 0, txt = 0, sm = 0;
-    raw.slice(0, 4000).split(NOTE_PART).forEach((p, i) => {
+    const push = (ch, ff) => {
+      if (!o.allow(ch) || txt >= o.textMax) return;
+      if (ch === ' ' && (!out.length || (o.collapse && out[out.length - 1].c === ' '))) return;
+      out.push({ c: ch, f: ff }); txt++;
+    };
+    raw.slice(0, o.textMax * 8 + 400).split(NOTE_PART).forEach((p, i) => {
       if (i % 2) {
         const m = /^\[(s|f):(.+)\]$/.exec(p);
-        if (m[1] === 's') { if (SMILEY_SET.has(m[2]) && sm < NOTE_SMILEY_MAX) { sm++; out.push({ s: m[2] }); } }
-        else if (/^[0-7]$/.test(m[2])) f = +m[2];
-        return;
+        if (m[1] === 's' && SMILEY_SET.has(m[2])) { if (sm < o.smMax) { sm++; out.push({ s: m[2] }); } return; }
+        if (m[1] === 'f' && /^[0-7]$/.test(m[2]) && !o.noFmt) { f = +m[2]; return; }
+        if (!o.keepBad) return;
       }
-      for (const ch of p.replace(/\u00a0/g, ' ')) {
-        if (!NOTE_CHAR.test(ch) || txt >= NOTE_TEXT_MAX) continue;
-        if (ch === ' ' && (!out.length || out[out.length - 1].c === ' ')) continue;
-        out.push({ c: ch, f }); txt++;
-      }
+      for (const ch of p.replace(/ /g, ' ')) push(ch, f);
     });
     while (out.length && out[out.length - 1].c === ' ') out.pop();
     return out;
   }
+  const noteUnits = raw => richUnits(raw, NOTE_OPT);
   function noteString(units, plain) {
     let out = '', f = 0;
-    for (const u of units) {
-      if (u.s) { out += '[s:' + u.s + ']'; continue; }
+    units.forEach((u, i) => {
+      if (u.s) { out += '[s:' + u.s + ']'; return; }
       if (!plain && u.f !== f) { out += '[f:' + u.f + ']'; f = u.f; }
       out += u.c;
-    }
+      const n1 = units[i + 1], n2 = units[i + 2];
+      if (!plain && u.c === '[' && n1 && n2 && /^[sf]$/.test(n1.c || '') && n2.c === ':') out += '[f:' + f + ']';
+    });
     return out;
   }
   const cleanNote = raw => noteString(noteUnits(raw));
@@ -2368,6 +2378,10 @@ a.qb{text-decoration:none}
 .nfmt:hover{background:var(--s2);color:var(--tx)}
 .nfmt[aria-pressed=true]{background:var(--btn);border-color:var(--btn);color:#fff}
 .nfmt.b{font-weight:800}.nfmt.i{font-style:italic;font-family:Georgia,serif}.nfmt.u{text-decoration:underline;text-underline-offset:2px}
+.ctools{display:flex;padding:6px 8px 0;background:var(--s1);border-top:1px solid var(--bd)}
+.ctools .ntools{margin:0}
+.ctools .nfmt{width:28px;height:24px;font-size:13px}
+.ctools+.composer{border-top:0;padding-top:6px}
 .mnote img,.nfield img{height:1.35em;width:auto;vertical-align:-.3em;margin:0 1px}
 .x.has{position:relative}
 .x.has::after{content:'';position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:var(--hi)}
@@ -3008,7 +3022,8 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   const msgsEl = h('div', { class: 'msgs' }, emptyEl);
   const inputEl = h('div', { class: 'input', contenteditable: 'true', role: 'textbox', 'aria-label': 'Üzenet',
     'data-ph': 'Írj üzenetet…', enterkeyhint: 'send', spellcheck: 'true' });
-  inputEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); sendChat(); } });
+  const shake = () => { inputEl.classList.remove('slow'); void inputEl.offsetWidth; inputEl.classList.add('slow'); };
+  const chatEd = richEditor(inputEl, { ...CHAT_OPT, onEnter: () => sendChat(), onErr: shake });
   const epanel = h('div', { class: 'epanel' },
     h('div', { class: 'ehead' }, h('span', { text: 'Smiley-k' }),
       btn('x', 'x-lg', '', { 'aria-label': 'Smiley-k bezárása', onclick: () => toggleEmoji(false) })),
@@ -3019,6 +3034,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   const etoggle = h('button', { class: 'etoggle', 'aria-label': 'Smiley-k', onclick: () => toggleEmoji() }, smileyImg('kettospont%20).png'));
   const chatEl = h('div', { role: 'tabpanel', style: 'display:flex;flex-direction:column;flex:1 1 0;min-height:0' },
     msgsEl,
+    h('div', { class: 'ctools' }, chatEd.tools),
     h('div', { class: 'composer' }, etoggle, inputEl, btn('send', 'send-fill', '', { 'aria-label': 'Küldés', onclick: sendChat })));
 
   const connChip = h('span', { class: 'conn', role: 'status', style: 'display:none' }, dot, connText);
@@ -3037,7 +3053,8 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (!on) floatLayer.querySelectorAll('.float').forEach(e => e.remove());
   }
   let myNote = cleanNote(store.get('tcwt_note') || '');
-  const fmtClass = f => [1, 2, 4].filter(b => f & b).map(b => 'f' + b).join(' ');
+  function getSel() { return shadow.getSelection ? shadow.getSelection() : document.getSelection(); }
+  function fmtClass(f) { return [1, 2, 4].filter(b => f & b).map(b => 'f' + b).join(' '); }
   function noteRuns(units, edit) {
     const out = [];
     let run = null;
@@ -3071,16 +3088,9 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     noteBtn.classList.add('on');
     setTimeout(() => { const f = notePop.querySelector('.nfield'); f.focus(); const r = document.createRange(); r.selectNodeContents(f); r.collapse(false); const sel = getSel(); if (sel) { sel.removeAllRanges(); sel.addRange(r); } }, 30);
   }
-  function buildNotePop() {
-    const field = h('div', { class: 'nfield', contenteditable: 'true', role: 'textbox', 'aria-label': 'Állapot', 'data-ph': 'Adj meg egy státuszt', spellcheck: 'false' });
-    const count = h('span', { class: 'ncount' });
-    const hint = h('div', { class: 'nerr', role: 'alert', hidden: 'hidden' });
-    let hintT = null;
-    const showErr = msg => { hint.textContent = msg; hint.hidden = false; clearTimeout(hintT); hintT = setTimeout(() => { hint.hidden = true; }, 3500); };
-    const ERR_CHAR = 'A szöveg érvénytelen karaktert tartalmaz!', ERR_LEN = 'Legfeljebb ' + NOTE_TEXT_MAX + ' karakter lehet.', ERR_SM = 'Legfeljebb ' + NOTE_SMILEY_MAX + ' smiley lehet.';
-    let units = noteUnits(myNote), sel = [units.length, units.length], pend = null;
+  function richEditor(field, o) {
+    let units = richUnits(o.initial || '', o), sel = [units.length, units.length], pend = null, snapped = false;
     const undo = [], redo = [];
-    let snapped = false;
     const snap = () => { undo.push({ u: units.map(x => ({ ...x })), s: sel.slice() }); if (undo.length > 60) undo.shift(); redo.length = 0; };
     const textCount = us => us.filter(u => !u.s).length, smCount = us => us.filter(u => u.s).length;
     const TAGF = { B: 1, STRONG: 1, I: 2, EM: 2, U: 4 };
@@ -3088,7 +3098,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       const out = [];
       let bad = false;
       const walk = (node, f) => node.childNodes.forEach(n => {
-        if (n.nodeType === 3) { for (const ch of n.nodeValue.replace(/ /g, ' ')) { if (NOTE_CHAR.test(ch)) out.push({ c: ch, f }); else if (ch !== '\n') bad = true; } return; }
+        if (n.nodeType === 3) { for (const ch of n.nodeValue.replace(/[ \t]/g, ' ')) { if (o.allow(ch)) out.push({ c: ch, f }); else if (ch !== '\n' && ch !== '\r') bad = true; } return; }
         if (n.nodeType !== 1) return;
         if (n.nodeName === 'IMG') { if (SMILEY_SET.has(n.dataset.s)) out.push({ s: n.dataset.s }); else bad = true; return; }
         if (n.nodeName === 'BR') return;
@@ -3101,17 +3111,11 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       const out = [];
       let txt = 0, sm = 0, err = '';
       for (const u of us) {
-        if (u.s) { if (sm < NOTE_SMILEY_MAX) { sm++; out.push(u); } else err = err || ERR_SM; continue; }
-        if (u.c === ' ' && (!out.length || out[out.length - 1].c === ' ')) continue;
-        if (txt < NOTE_TEXT_MAX) { txt++; out.push(u); } else err = err || ERR_LEN;
+        if (u.s) { if (sm < o.smMax) { sm++; out.push(u); } else err = err || 'sm'; continue; }
+        if (u.c === ' ' && (!out.length || (o.collapse && out[out.length - 1].c === ' '))) continue;
+        if (txt < o.textMax) { txt++; out.push(u); } else err = err || 'len';
       }
       return { out, err };
-    }
-    function leaves() {
-      const out = [];
-      const walk = node => node.childNodes.forEach(n => { if (n.nodeType === 3 || n.nodeName === 'IMG') out.push(n); else if (n.nodeType === 1) walk(n); });
-      walk(field);
-      return out;
     }
     function toIndex(node, off) {
       if (!field.contains(node)) return units.length;
@@ -3125,12 +3129,14 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     }
     function toPos(i) {
       let n = 0;
-      const ls = leaves();
+      const ls = [];
+      const walk = node => node.childNodes.forEach(c => { if (c.nodeType === 3 || c.nodeName === 'IMG') ls.push(c); else if (c.nodeType === 1) walk(c); });
+      walk(field);
       for (const l of ls) {
         if (l.nodeType === 3) {
-          const len = Array.from(l.nodeValue).length;
-          if (i - n <= len) { const cps = Array.from(l.nodeValue).slice(0, i - n).join('').length; return [l, cps]; }
-          n += len;
+          const cps = Array.from(l.nodeValue);
+          if (i - n <= cps.length) return [l, cps.slice(0, i - n).join('').length];
+          n += cps.length;
         } else {
           if (i <= n) return [l.parentNode, [...l.parentNode.childNodes].indexOf(l)];
           n++;
@@ -3138,17 +3144,18 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       }
       return [field, field.childNodes.length];
     }
+    const rangeIdx = r => { const a = toIndex(r.startContainer, r.startOffset), b = toIndex(r.endContainer, r.endOffset); return [Math.min(a, b), Math.max(a, b)]; };
     function getIdx() {
       const s2 = getSel();
       if (!s2 || !s2.rangeCount) return null;
       const r = s2.getRangeAt(0);
-      if (!field.contains(r.startContainer) && r.startContainer !== field) return null;
-      const a = toIndex(r.startContainer, r.startOffset), b = toIndex(r.endContainer, r.endOffset);
-      return [Math.min(a, b), Math.max(a, b)];
+      if (!field.contains(r.startContainer)) return null;
+      return rangeIdx(r);
     }
+    const focused = () => shadow.activeElement === field;
     function setIdx(a, b) {
       sel = [a, b];
-      if (shadow.activeElement !== field) return;
+      if (!focused()) return;
       const r = document.createRange(), p1 = toPos(a), p2 = toPos(b);
       r.setStart(p1[0], p1[1]); r.setEnd(p2[0], p2[1]);
       const s2 = getSel(); if (s2) { s2.removeAllRanges(); s2.addRange(r); }
@@ -3164,10 +3171,17 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       const t = units.slice(a, b).filter(u => !u.s);
       return t.length ? t.reduce((m, u) => m & u.f, 7) : caretFmt(a);
     }
+    const fmtBtns = [[1, 'b', 'F', 'Félkövér (Ctrl+B)'], [2, 'i', 'D', 'Dőlt (Ctrl+I)'], [4, 'u', 'A', 'Aláhúzott (Ctrl+U)']].map(([bit, cls, txt, title]) => {
+      const b = h('button', { type: 'button', class: 'nfmt ' + cls, text: txt, title, 'aria-label': title, 'aria-pressed': 'false' });
+      b.addEventListener('mousedown', e => e.preventDefault());
+      b.addEventListener('click', () => toggle(bit));
+      return [bit, b];
+    });
+    const tools = h('div', { class: 'ntools', role: 'toolbar', 'aria-label': 'Formázás' }, ...fmtBtns.map(x => x[1]));
     function paint() {
-      count.textContent = textCount(units) + '/' + NOTE_TEXT_MAX + ' · ' + smCount(units) + '/' + NOTE_SMILEY_MAX + ' smiley';
       const f = curFmt();
       fmtBtns.forEach(([bit, b]) => b.setAttribute('aria-pressed', f & bit ? 'true' : 'false'));
+      if (o.onPaint) o.onPaint(textCount(units), smCount(units));
     }
     function render(a, b) {
       field.replaceChildren(...noteRuns(units, true));
@@ -3181,45 +3195,39 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       if (pend && (i[0] !== i[1] || i[0] !== pend.at)) pend = null;
       paint();
     }
-    function insert(newUnits) {
-      const [a, b] = getIdx() || sel;
+    const err = k => { if (k && o.onErr) o.onErr(k); };
+    function insert(newUnits, at) {
+      const [a, b] = at || getIdx() || sel;
       snap();
       const before = units.slice(0, a), after = units.slice(b);
-      let err = '';
-      const room = NOTE_TEXT_MAX - textCount(before) - textCount(after), sroom = NOTE_SMILEY_MAX - smCount(before) - smCount(after);
+      let e = '';
+      const room = o.textMax - textCount(before) - textCount(after), sroom = o.smMax - smCount(before) - smCount(after);
       let t = 0, sm = 0;
       const add = newUnits.filter(u => {
-        if (u.s) { if (sm < sroom) { sm++; return true; } err = err || ERR_SM; return false; }
-        if (t < room) { t++; return true; } err = err || ERR_LEN; return false;
+        if (u.s) { if (sm < sroom) { sm++; return true; } e = e || 'sm'; return false; }
+        if (t < room) { t++; return true; } e = e || 'len'; return false;
       });
       const res = fix(before.concat(add, after));
       units = res.out;
-      const at = Math.max(0, Math.min(units.length, units.length - after.length));
-      const keep = pend && pend.at === a ? pend : null;
-      render(at);
-      pend = keep && add.length ? null : keep;
-      if (err || res.err) showErr(err || res.err);
+      const keep = pend && pend.at === a && !add.length ? pend : null;
+      render(Math.max(0, units.length - after.length));
+      pend = keep;
+      err(e || res.err);
     }
-    const insertText = (txt, f) => {
-      const [a] = getIdx() || sel;
-      const fm = f !== undefined ? f : (pend && pend.at === a ? pend.f : caretFmt(a));
+    function insertText(txt, at) {
+      const [a, b] = at || getIdx() || sel;
+      const fm = pend && pend.at === a ? pend.f : caretFmt(a);
       let bad = false;
       const add = [];
-      for (const ch of String(txt).replace(/[\r\n\t ]/g, ' ')) { if (NOTE_CHAR.test(ch)) add.push({ c: ch, f: fm }); else bad = true; }
-      if (add.length || bad) insert(add);
-      if (bad) showErr(ERR_CHAR);
-    };
-    const focusField = () => { if (shadow.activeElement !== field) { field.focus(); setIdx(sel[0], sel[1]); } };
+      for (const ch of String(txt).replace(/[\r\n\t ]/g, ' ')) { if (o.allow(ch)) add.push({ c: ch, f: fm }); else bad = true; }
+      if (add.length || bad) insert(add, [a, b]);
+      if (bad) err('char');
+    }
+    const focusField = () => { if (!focused()) { field.focus({ preventScroll: true }); setIdx(sel[0], sel[1]); } };
     function toggle(bit) {
       focusField();
       const [a, b] = getIdx() || sel;
-      if (a === b) {
-        const f = curFmt() ^ bit;
-        pend = { at: a, f };
-        sel = [a, a];
-        paint();
-        return;
-      }
+      if (a === b) { pend = { at: a, f: curFmt() ^ bit }; sel = [a, a]; paint(); return; }
       const t = units.slice(a, b).filter(u => !u.s);
       if (!t.length) return;
       snap();
@@ -3243,23 +3251,25 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       if (!snapped && noteString(res.out) !== noteString(units)) snap();
       snapped = false;
       units = res.out;
-      const at = Math.min(i[0], units.length);
-      render(at);
-      if (bad) showErr(ERR_CHAR); else if (res.err) showErr(res.err);
+      render(Math.min(i[0], units.length));
+      err(bad ? 'char' : res.err);
     }
     field.addEventListener('beforeinput', e => {
       const t = e.inputType || '';
       if (e.isComposing || t === 'insertCompositionText') return;
       if (/^format(Bold|Italic|Underline)$/.test(t)) { e.preventDefault(); toggle({ formatBold: 1, formatItalic: 2, formatUnderline: 4 }[t]); return; }
       if (t === 'historyUndo' || t === 'historyRedo') { e.preventDefault(); history(t === 'historyUndo'); return; }
-      if (t === 'insertParagraph' || t === 'insertLineBreak') { e.preventDefault(); return; }
+      if (t === 'insertParagraph' || t === 'insertLineBreak') { e.preventDefault(); if (o.onEnter) o.onEnter(); return; }
       if (/^format/.test(t) || t === 'insertFromDrop' || t === 'deleteByDrag') { e.preventDefault(); return; }
       if (t === 'insertText' || t === 'insertReplacementText' || t === 'insertFromPaste') {
         let txt = e.data;
         if (txt == null && e.dataTransfer) txt = e.dataTransfer.getData('text/plain');
         if (txt == null) return;
         e.preventDefault();
-        insertText(txt);
+        let at = null;
+        const tr = e.getTargetRanges ? e.getTargetRanges() : [];
+        if (tr.length && field.contains(tr[0].startContainer)) { const r = document.createRange(); r.setStart(tr[0].startContainer, tr[0].startOffset); r.setEnd(tr[0].endContainer, tr[0].endOffset); at = rangeIdx(r); }
+        insertText(txt, at);
         return;
       }
       if (/^delete/.test(t)) { const i = getIdx(); if (i) sel = i; snap(); snapped = true; pend = null; }
@@ -3267,18 +3277,17 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     field.addEventListener('input', e => { if (!e.isComposing) afterNative(); });
     field.addEventListener('compositionend', () => setTimeout(afterNative, 0));
     ['keyup', 'mouseup', 'focus'].forEach(ev => field.addEventListener(ev, () => setTimeout(syncSel, 0)));
-    const onSelChange = () => { if (!field.isConnected) { document.removeEventListener('selectionchange', onSelChange); return; } if (shadow.activeElement === field) syncSel(); };
+    const onSelChange = () => { if (!field.isConnected && o.once) { document.removeEventListener('selectionchange', onSelChange); return; } if (focused()) syncSel(); };
     document.addEventListener('selectionchange', onSelChange);
     field.addEventListener('keydown', e => {
       const k = (e.key || '').toLowerCase(), mod = (e.ctrlKey || e.metaKey) && !e.altKey;
-      if (e.key === 'Enter') { e.preventDefault(); commit(); }
-      else if (e.key === 'Escape') { e.preventDefault(); toggleNote(false); }
+      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (o.onEnter) o.onEnter(); }
+      else if (e.key === 'Escape' && o.onEscape) { e.preventDefault(); o.onEscape(); }
       else if (mod && (k === 'b' || k === 'i' || k === 'u')) { e.preventDefault(); toggle({ b: 1, i: 2, u: 4 }[k]); }
       else if (mod && (k === 'z' || k === 'y')) { e.preventDefault(); history(k === 'z' && !e.shiftKey); }
-      e.stopPropagation();
+      if (o.stopKeys) e.stopPropagation();
     });
-    field.addEventListener('keyup', e => e.stopPropagation());
-    field.addEventListener('keypress', e => e.stopPropagation());
+    if (o.stopKeys) { field.addEventListener('keyup', e => e.stopPropagation()); field.addEventListener('keypress', e => e.stopPropagation()); }
     field.addEventListener('paste', e => {
       e.preventDefault();
       const raw = (e.clipboardData && e.clipboardData.getData('text/plain') || '').replace(/\s+/g, ' ');
@@ -3286,25 +3295,44 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     });
     field.addEventListener('drop', e => e.preventDefault());
     field.addEventListener('dragstart', e => e.preventDefault());
-    const fmtBtns = [[1, 'b', 'F', 'Félkövér (Ctrl+B)'], [2, 'i', 'D', 'Dőlt (Ctrl+I)'], [4, 'u', 'A', 'Aláhúzott (Ctrl+U)']].map(([bit, cls, txt, title]) => {
-      const b = h('button', { type: 'button', class: 'nfmt ' + cls, text: txt, title, 'aria-label': title, 'aria-pressed': 'false' });
-      b.addEventListener('mousedown', e => e.preventDefault());
-      b.addEventListener('click', () => toggle(bit));
-      return [bit, b];
-    });
-    const tools = h('div', { class: 'ntools', role: 'toolbar', 'aria-label': 'Formázás' }, ...fmtBtns.map(x => x[1]));
+    function pull() {
+      const res = fix(readDom().out);
+      if (noteString(res.out) !== noteString(units)) { units = res.out; pend = null; }
+    }
+    field.replaceChildren(...noteRuns(units, true));
+    paint();
+    return {
+      tools,
+      units: () => units,
+      value: () => { pull(); return noteString(units); },
+      text: () => { pull(); return noteString(units, true).replace(TOKEN, ''); },
+      textCount: () => textCount(units),
+      smCount: () => smCount(units),
+      set(v) { units = richUnits(v || '', o); pend = null; undo.length = redo.length = 0; render(units.length); },
+      insertSmiley(f, focus) { if (focus !== false) focusField(); insert([{ s: f }]); },
+      insertText(t) { focusField(); insertText(t); },
+      toggle, focus: focusField
+    };
+  }
+  function buildNotePop() {
+    const field = h('div', { class: 'nfield', contenteditable: 'true', role: 'textbox', 'aria-label': 'Állapot', 'data-ph': 'Adj meg egy státuszt', spellcheck: 'false' });
+    const count = h('span', { class: 'ncount' });
+    const hint = h('div', { class: 'nerr', role: 'alert', hidden: 'hidden' });
+    let hintT = null;
+    const showErr = msg => { hint.textContent = msg; hint.hidden = false; clearTimeout(hintT); hintT = setTimeout(() => { hint.hidden = true; }, 3500); };
+    const ERRS = { char: 'A szöveg érvénytelen karaktert tartalmaz!', len: 'Legfeljebb ' + NOTE_TEXT_MAX + ' karakter lehet.', sm: 'Legfeljebb ' + NOTE_SMILEY_MAX + ' smiley lehet.' };
+    const ed = richEditor(field, { ...NOTE_OPT, initial: myNote, once: true, stopKeys: true,
+      onErr: k => showErr(ERRS[k]), onEnter: () => commit(), onEscape: () => toggleNote(false),
+      onPaint: (t, sm) => { count.textContent = t + '/' + NOTE_TEXT_MAX + ' · ' + sm + '/' + NOTE_SMILEY_MAX + ' smiley'; } });
+    const tools = ed.tools;
     const kb = h('div', { class: 'nkeys', role: 'group', 'aria-label': 'Smiley-k' }, ...SMILEYS.map(f => {
       const b = h('button', { type: 'button', class: 'nkey', title: smileyName(f) }, smileyImg(f));
       b.addEventListener('mousedown', e => e.preventDefault());
-      b.addEventListener('click', () => {
-        if (smCount(units) >= NOTE_SMILEY_MAX) { showErr(ERR_SM); return; }
-        focusField();
-        insert([{ s: f }]);
-      });
+      b.addEventListener('click', () => { if (ed.smCount() >= NOTE_SMILEY_MAX) { showErr(ERRS.sm); return; } ed.insertSmiley(f); });
       return b;
     }));
     function commit() {
-      const v = cleanNote(codesToSmileys(noteString(units)));
+      const v = cleanNote(codesToSmileys(ed.value()));
       if (v !== myNote) {
         myNote = v;
         if (v) store.set('tcwt_note', v); else store.del('tcwt_note');
@@ -3313,13 +3341,12 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       }
       toggleNote(false);
     }
-    field.replaceChildren(...noteRuns(units, true)); paint();
     const pop = h('div', { class: 'notepop', role: 'dialog', 'aria-label': 'Állapot' },
       h('div', { class: 'nhead' }, h('span', { class: 'ntitle', text: 'Állapot' }), count,
         btn('x nclose', 'x-lg', '', { title: 'Bezárás', 'aria-label': 'Bezárás', onclick: () => toggleNote(false) })),
       tools, field, hint, kb,
       h('div', { class: 'nrow' },
-        btn('btn sec', 'trash', 'Törlés', { title: 'Állapot törlése', onclick: () => { units = []; commit(); } }),
+        btn('btn sec', 'trash', 'Törlés', { title: 'Állapot törlése', onclick: () => { ed.set(''); commit(); } }),
         btn('btn', 'check-lg', 'Mentés', { onclick: commit })));
     pop.addEventListener('pointerdown', e => e.stopPropagation());
     return pop;
@@ -3854,10 +3881,14 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (room && locked && !isHost && VPATH && sameVideo(VPATH, roomV)) { lockToast(); return; }
     v.currentTime = Math.min(t, Math.max(0, v.duration - 0.25));
   }
-  function richParts(text, vid) {
-    return String(text || '').split(TOKEN)
-      .map((p, i) => i % 2 ? (SMILEY_SET.has(p) ? smileyImg(p) : '[s:' + p + ']') : (p === '' ? p : stampParts(p, vid)))
-      .flat().filter(p => p !== '');
+  function richParts(text, vid, plain) {
+    return noteRuns(richUnits(String(text || ''), plain ? SHOW_PLAIN : SHOW_OPT)).map(n => {
+      if (n.nodeName === 'IMG') return n;
+      const parts = stampParts(n.textContent, vid);
+      if (n.nodeType === 3) return parts;
+      n.replaceChildren(...parts);
+      return n;
+    }).flat().filter(p => p !== '');
   }
   let stampLen = 0;
   setInterval(() => {
@@ -3868,13 +3899,12 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (len > 0 && myId && (!vinfo[myId] || vinfo[myId].d !== len)) viSet(myId, { d: len });
     if (room && chatLog.some(x => !x.s && x.v && /\d:\d\d/.test(x.m))) { const keep = stick, top = msgsEl.scrollTop; renderChat(); if (!keep) { stick = false; msgsEl.scrollTop = top; } }
   }, 1000);
-  const onlySmileys = text => !!text && String(text).search(TOKEN) >= 0 && !String(text).replace(TOKEN, '').trim() &&
-    String(text).match(TOKEN).every(t => SMILEY_SET.has(t.slice(3, -1)));
+  const onlySmileys = text => { const us = richUnits(String(text || ''), SHOW_PLAIN); return us.some(u => u.s) && us.every(u => u.s || u.c === ' '); };
 
   const sameSender = (a, b) => a.c && b.c ? a.c === b.c : a.n === b.n;
   const isCont = (prev, r) => !!(prev && !prev.s && !r.s && sameSender(prev, r) && r.ts && prev.ts && r.ts - prev.ts < 120000);
   function chatNode(r, cont) {
-    const text = r.e && SMILEY_SET.has(r.e) ? '[s:' + r.e + ']' : r.m;
+    const text = r.e && SMILEY_SET.has(r.e) ? '[s:' + r.e + ']' : (r.mf || r.m);
     const me = r.me || (r.c && r.c === cid);
     const tm = r.ts ? new Date(r.ts).toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' }) : (r.tm || '');
     return h('div', { class: 'msg' + (me ? ' me' : '') + (cont ? ' cont' : '') },
@@ -3882,7 +3912,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
         me ? null : avatarEl(r.n, r.ui, 'xs'),
         me ? null : h('b', { title: clean(r.n), text: clean(r.n) }),
         h('span', { text: tm })),
-      h('div', { class: 'bubble' + (onlySmileys(text) ? ' smiley' : ''), title: tm }, richParts(text, r.v)));
+      h('div', { class: 'bubble' + (onlySmileys(text) ? ' smiley' : ''), title: tm }, richParts(text, r.v, !r.mf)));
   }
 
   const LOG_MAX = 150, HIST_MAX = 100;
@@ -4108,6 +4138,11 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     pushNode(sysNode(rec));
   }
 
+  function chatFmt(raw) {
+    if (typeof raw !== 'string') return undefined;
+    const us = richUnits(clean(raw, 6000), SHOW_OPT);
+    return us.some(u => u.f) ? noteString(us) : undefined;
+  }
   function chatRec(msg) {
     const m = msg.e && SMILEY_SET.has(msg.e) ? '[s:' + msg.e + ']' : clean(msg.m, MSG_MAX);
     if (!m.trim()) return null;
@@ -4115,7 +4150,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       id: typeof msg.mid === 'string' ? msg.mid.slice(0, 40) : 'x' + rand(12),
       ts: typeof msg.ts === 'number' && isFinite(msg.ts) && msg.ts > 0 ? Math.min(msg.ts, Date.now()) : Date.now(),
       c: typeof msg.c === 'string' ? msg.c.slice(0, 20) : null,
-      n: cleanName(msg.n), m, ui: validUi(msg.ui),
+      n: cleanName(msg.n), m, ui: validUi(msg.ui), mf: chatFmt(msg.mf),
       v: typeof msg.v === 'string' && /^\d{1,10}$/.test(msg.v) ? msg.v : undefined
     };
   }
@@ -4279,78 +4314,36 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   }
 
   function sendChat() {
-    const text = codesToSmileys(serialize(inputEl).replace(/\u00a0/g, ' ').trim()).slice(0, MSG_MAX);
+    const us = richUnits(codesToSmileys(chatEd.value()), CHAT_OPT);
+    const text = noteString(us, true).slice(0, MSG_MAX), fmt = us.some(u => u.f) ? noteString(us) : undefined;
     if (!text || !room) return;
     const now = Date.now();
     sendTimes = sendTimes.filter(t => now - t < 4000);
-    if (sendTimes.length >= 5) { inputEl.classList.remove('slow'); void inputEl.offsetWidth; inputEl.classList.add('slow'); return; }
+    if (sendTimes.length >= 5) { shake(); return; }
     sendTimes.push(now);
-    const msg = { id: sid, c: cid, k: 'chat', mid: 'm' + rand(10) + Date.now().toString(36), ts: Date.now(), n: shown(), ui: myUi, m: text, v: vidId(roomV) || undefined };
+    const msg = { id: sid, c: cid, k: 'chat', mid: 'm' + rand(10) + Date.now().toString(36), ts: Date.now(), n: shown(), ui: myUi, m: text, mf: fmt, v: vidId(roomV) || undefined };
     const rec = addChat(msg, true);
     publish('m', msg, false, w => { if (rec) { rec.w = w; saveLog(); } });
     clearTimeout(histPubTimer);
     histPubTimer = setTimeout(publishHistory, 2500);
-    inputEl.replaceChildren();
-    savedRange = null;
+    chatEd.set('');
   }
 
-  const TEXT_MAX = 300, SMILEY_MAX = 30, MSG_MAX = 1500;
   let sendTimes = [], histPubTimer = null;
-  let savedRange = null;
-  const getSel = () => (shadow.getSelection ? shadow.getSelection() : document.getSelection());
-  function serialize(node) {
-    let out = '';
-    node.childNodes.forEach(n => {
-      if (n.nodeType === 3) out += n.nodeValue;
-      else if (n.nodeName === 'IMG') { if (SMILEY_SET.has(n.dataset.s)) out += '[s:' + n.dataset.s + ']'; }
-      else if (n.nodeName === 'BR') out += '\n';
-      else { if (out && /^(DIV|P)$/.test(n.nodeName)) out += '\n'; out += serialize(n); }
-    });
-    return out;
-  }
-  function saveRange() {
-    const s = getSel();
-    if (s?.rangeCount && inputEl.contains(s.getRangeAt(0).startContainer)) savedRange = s.getRangeAt(0).cloneRange();
-  }
-  ['keyup', 'mouseup', 'input', 'focus'].forEach(ev => inputEl.addEventListener(ev, saveRange));
-
   function insertSmiley(f) {
-    if (!SMILEY_SET.has(f) || inputEl.querySelectorAll('img').length >= SMILEY_MAX) return;
-    const img = smileyImg(f);
-    img.dataset.s = f;
-    let r = savedRange && inputEl.contains(savedRange.startContainer) ? savedRange : null;
-    if (!r) { r = document.createRange(); r.selectNodeContents(inputEl); r.collapse(false); }
-    r.deleteContents();
-    r.insertNode(img);
-    r.setStartAfter(img);
-    r.collapse(true);
-    if (!isMobile()) inputEl.focus({ preventScroll: true });
-    const s = getSel();
-    if (s) { s.removeAllRanges(); s.addRange(r); }
-    savedRange = r.cloneRange();
+    if (!SMILEY_SET.has(f)) return;
+    if (chatEd.smCount() >= SMILEY_MAX) { shake(); return; }
+    chatEd.insertSmiley(f, !isMobile());
     inputEl.scrollTop = inputEl.scrollHeight;
   }
-
-  function insertChatText(text) {
-    let r = savedRange && inputEl.contains(savedRange.startContainer) ? savedRange : null;
-    if (!r) { r = document.createRange(); r.selectNodeContents(inputEl); r.collapse(false); }
-    const tn = document.createTextNode(text);
-    r.deleteContents();
-    r.insertNode(tn);
-    r.setStartAfter(tn);
-    r.collapse(true);
-    inputEl.focus({ preventScroll: true });
-    const s = getSel();
-    if (s) { s.removeAllRanges(); s.addRange(r); }
-    savedRange = r.cloneRange();
-  }
+  const insertChatText = text => chatEd.insertText(text);
   const onRoomVideoNow = () => !!(room && VPATH && roomV && sameVideo(VPATH, roomV));
   function stampToChat() {
     const v = getVideo();
     if (!v || !onRoomVideoNow()) return;
     togglePanel(true);
     setView('chat');
-    const cur = inputEl.textContent;
+    const cur = chatEd.text();
     insertChatText((cur && !/\s$/.test(cur) ? ' ' : '') + fmtTime(v.currentTime) + ' ');
   }
   function addMenuItem() {
@@ -4373,28 +4366,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const vc = document.querySelector('.video-container');
     if (vc) vc.addEventListener('contextmenu', () => { li.style.display = onRoomVideoNow() ? '' : 'none'; }, true);
   }
-
-  inputEl.addEventListener('paste', e => {
-    e.preventDefault();
-    const left = TEXT_MAX - inputEl.textContent.length;
-    const t = (e.clipboardData ? e.clipboardData.getData('text/plain') : '').replace(/\s+/g, ' ').slice(0, Math.max(0, left));
-    if (!t) return;
-    let ok = false;
-    try { ok = document.execCommand('insertText', false, t); } catch (err) {}
-    if (!ok) {
-      const node = document.createTextNode(t);
-      const sel = getSel();
-      const rg = sel && sel.rangeCount && inputEl.contains(sel.getRangeAt(0).startContainer) ? sel.getRangeAt(0) : null;
-      if (rg) { rg.deleteContents(); rg.insertNode(node); rg.setStartAfter(node); rg.collapse(true); sel.removeAllRanges(); sel.addRange(rg); }
-      else inputEl.append(node);
-      saveRange();
-    }
-  });
-  inputEl.addEventListener('beforeinput', e => {
-    if (/^insert(Text|ReplacementText|CompositionText)$/.test(e.inputType) && inputEl.textContent.length >= TEXT_MAX) e.preventDefault();
-    if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') { e.preventDefault(); sendChat(); }
-  });
-  inputEl.addEventListener('input', () => { if (!inputEl.textContent && !inputEl.querySelector('img')) inputEl.replaceChildren(); });
 
   function askName() {
     if (acct) return;
