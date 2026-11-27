@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.18
+// @version      1.19
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -26,7 +26,7 @@
   de.setAttribute('data-trash2gether', '');
 
   // A fejléc @version sorával egyezzen (a release.py mindkettőt egyszerre írja át).
-  const SCRIPT_VERSION = '1.18';
+  const SCRIPT_VERSION = '1.19';
   // Ha valaki a szobában újabb változatot használ, felajánljuk a frissítést. A Tampermonkey a .user.js címet
   // megnyitva rögtön a frissítő oldalát mutatja; a bővítmény-kiadásban ez a projekt oldalára mutat (build.py).
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
@@ -1290,30 +1290,39 @@
   const verParts = x => typeof x === 'string' && /^\d{1,4}(\.\d{1,4}){0,3}$/.test(x) ? x.split('.').map(Number) : null;
   const newerVer = (a, b) => { const p = verParts(a), q = verParts(b); if (!p || !q) return false;
     for (let i = 0; i < Math.max(p.length, q.length); i++) { const d = (p[i] || 0) - (q[i] || 0); if (d) return d > 0; } return false; };
-  let updateOffered = false;
+  let updateOffered = false, availVer = '';
+  // elérhető újabb verzió: a panel alján a verzió-címke „Frissítés” gombbá válik, a kerek gombon jelzés
+  function setAvail(v) {
+    if (!newerVer(v, availVer || SCRIPT_VERSION)) return;
+    availVer = v;
+    try { paintVer(); } catch (e) {}
+  }
   function noteVersion(sv) {
+    if (newerVer(sv, SCRIPT_VERSION)) setAvail(sv);
     if (updateOffered || !newerVer(sv, SCRIPT_VERSION)) return;
     if (sess.get('tcwt_updoff') === sv) return;   // ebben a böngészőlapban már szóltunk erről a verzióról
     updateOffered = true; sess.set('tcwt_updoff', sv);
     setTimeout(() => showToast([icon('arrow-right-circle'), h('span', { text: ' Új Trash2Gether: ' + sv + ' (neked ' + SCRIPT_VERSION + ' van) – ' }),
       h('a', { href: UPDATE_URL, target: '_blank', rel: 'noopener', text: 'Frissítés', style: 'color:inherit;font-weight:700;text-decoration:underline' })], 9000, 'upd'), 1500);
   }
-  function checkUpdate() {
+  function checkUpdate(force, done) {
     const known = store.get('tcwt_updnew');
     if (known && newerVer(known, SCRIPT_VERSION)) noteVersion(known);
     const last = +store.get('tcwt_updchk') || 0;
-    if (Math.abs(Date.now() - last) < 30 * 60000) return;
+    if (!force && Math.abs(Date.now() - last) < 30 * 60000) return;
     store.set('tcwt_updchk', String(Date.now()));
     fetch(META_URL + '?t=' + Math.floor(Date.now() / 60000), { cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' })
       .then(r => (r.ok ? r.text() : ''))
       .then(t => {
         const v = (/^\/\/\s*@version\s+(\S+)/m.exec(t.slice(0, 4000)) || [])[1];
-        if (!verParts(v)) return;
+        if (!verParts(v)) { if (done) done(null); return; }
         if (newerVer(v, SCRIPT_VERSION)) { store.set('tcwt_updnew', v); noteVersion(v); } else store.del('tcwt_updnew');
+        if (done) done(v);
       })
-      .catch(() => {});
+      .catch(() => { if (done) done(null); });
   }
   setTimeout(checkUpdate, 4000);
+  setInterval(checkUpdate, 31 * 60000);   // hosszú nézés közben is (ugyanazon az oldalon)
   // Aki végakarat nélkül tűnt el (összeomlott vagy elaludt a gép, vagy olyan szerveren volt, ami nem küldi el),
   // ne maradjon örökre a listán: minden lap 5 percenként frissíti a jelenlétét, 16 perc csend után kilépettnek
   // vesszük. A saját óránkkal mérünk (a másik gép órája eltérhet).
@@ -2284,6 +2293,14 @@ button{font:inherit;color:inherit;cursor:pointer;border:0}
   background:var(--btn);border:0;color:#fff;font-size:26px;display:flex;align-items:center;justify-content:center;
   box-shadow:0 6px 18px rgba(0,0,0,.45);z-index:2147483647;transition:background-color .2s,transform .2s}
 .fab:hover{transform:translateY(-1px)}
+.fab.upd::before{content:"";position:absolute;left:3px;top:3px;width:11px;height:11px;border-radius:50%;background:#a58bff;border:2px solid var(--bg);animation:t2gglow 2s ease-in-out infinite}
+.pfoot{display:flex;justify-content:flex-end;align-items:center;padding:4px 8px 5px;border-top:1px solid var(--bd);background:var(--bg);flex-shrink:0}
+.ver{display:inline-flex;align-items:center;gap:4px;font:700 10.5px/1 var(--body);letter-spacing:.3px;color:#fff;cursor:pointer;
+  background:linear-gradient(135deg,#5d36bc,#370072);border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:3px 9px;box-shadow:0 1px 6px rgba(93,54,188,.45)}
+.ver:hover{filter:brightness(1.18)}
+.ver .bi{font-size:11px}
+.ver.new{background:linear-gradient(135deg,#a58bff,#5d36bc);animation:t2gglow 2s ease-in-out infinite}
+@keyframes t2gglow{0%,100%{box-shadow:0 0 0 0 rgba(165,139,255,.65)}50%{box-shadow:0 0 0 5px rgba(165,139,255,0)}}
 .fab.live::after{content:"";position:absolute;left:2px;bottom:2px;width:13px;height:13px;border-radius:50%;background:#57a557;border:2px solid var(--bg)}
 .badge{position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#e34449;
   color:#fff;font-size:12px;font-weight:700;line-height:20px;display:none}
@@ -3146,7 +3163,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const caretEnd = () => { const r = document.createRange(); r.selectNodeContents(field); r.collapse(false); const s2 = getSel(); if (s2) { s2.removeAllRanges(); s2.addRange(r); } range = r.cloneRange(); };
     const paint = () => {
       const cur = read(), sm = (cur.match(TOKEN) || []).length, tl = cur.replace(TOKEN, '').length;
-      count.textContent = tl + '/' + NOTE_TEXT_MAX + (sm ? ' · ' + sm + '/' + NOTE_SMILEY_MAX + ' smiley' : '');
+      count.textContent = tl + '/' + NOTE_TEXT_MAX + ' · ' + sm + '/' + NOTE_SMILEY_MAX + ' smiley';
     };
     // minden változás után: ha nem engedett dolog került bele (emoji, kód, másolt formázás), kitisztítjuk
     const tidy = () => {
@@ -3235,13 +3252,31 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     (view === 'chat' ? tabChat : tabRoom).focus();
   });
   let view = store.get('tcwt_view') === 'room' ? 'room' : 'chat';
+  // Verzió a panel jobb alsó sarkában; ha újabb érhető el, kiemelt „Frissítés” gomb. A frissítést a Tampermonkey
+  // végzi (egy script magát nem írhatja felül): a gomb a frissítő ablakát nyitja meg, ott egy kattintás.
+  const verEl = h('button', { class: 'ver', type: 'button', onclick: () => {
+    if (availVer) { window.open(UPDATE_URL, '_blank', 'noopener'); return; }
+    setText(verEl, 'Keresés…');
+    checkUpdate(true, v => {
+      paintVer();
+      if (!availVer) showToast([icon(v ? 'check-lg' : 'exclamation-circle'), h('span', { text: v ? ' Ez a legfrissebb verzió (v' + SCRIPT_VERSION + ')' : ' Most nem sikerült ellenőrizni' })], 2200, '');
+    });
+  } });
+  function paintVer() {
+    verEl.classList.toggle('new', !!availVer);
+    verEl.replaceChildren(...(availVer ? [icon('arrow-up'), h('span', { text: 'v' + availVer + ' · Frissítés' })] : [h('span', { text: 'v' + SCRIPT_VERSION })]));
+    verEl.title = availVer ? 'Új verzió: v' + availVer + ' (neked v' + SCRIPT_VERSION + ' van). Kattints, majd a Tampermonkey ablakában a Frissítés gombra; utána töltsd újra az oldalt.'
+      : 'Trash2Gether v' + SCRIPT_VERSION + ' – kattints a frissítés kereséséhez';
+    fab.classList.toggle('upd', !!availVer);
+  }
   const panel = h('section', { class: 'panel' },
     ...rzEls,
     headEl,
-    setupEl, tabsEl, statusEl, liveEl, chatEl);
+    setupEl, tabsEl, statusEl, liveEl, chatEl, h('div', { class: 'pfoot' }, verEl));
   const dock = h('div', { class: 'dock', hidden: 'hidden' }, epanel, panel);
   const badge = h('span', { class: 'badge' });
   const fab = h('button', { class: 'fab', 'aria-label': 'Közös nézés', onclick: () => togglePanel(!panelOpen) }, icon('people-fill'), badge);
+  paintVer();
 
   const floatLayer = h('div', { class: 'floats' });
   const canTop = typeof HTMLElement === 'function' && 'popover' in HTMLElement.prototype;
