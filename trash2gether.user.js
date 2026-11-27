@@ -168,7 +168,7 @@
     const fix = () => {
       const v = getVideo();
       if (!v) return false;
-      const go = () => { if (v.duration > at + 1 && Math.abs(v.currentTime - at) > 1.5) v.currentTime = at; };
+      const go = () => { if (v.duration > at + 1 && (v.currentTime < at - 1.5 || v.currentTime > at + 15)) v.currentTime = at; };
       if (v.readyState >= 1) go(); else v.addEventListener('loadedmetadata', go, { once: true });
       return true;
     };
@@ -1189,9 +1189,9 @@
     // Csak a saját nevében küldhet bárki (a host-bejegyzésben a „c” az új host, nem a küldő).
     if (sub !== 'host' && 'c' in m && m.c !== s) return;
     if (sub.startsWith('p/')) {
-      const fresh = m.gone || Date.now() - m.at <= PRESENCE_TTL;
+      const current = m.gone || Date.now() - m.at <= PRESENCE_TTL;
       if (!m.gone && !okVer(m.at)) return;
-      if (fresh || retained) onPresence(sub.slice(2), m.gone || !fresh ? null : m, s, m.gone && Number.isInteger(m.b) ? m.b : null);
+      if (current || retained) onPresence(sub.slice(2), m.gone || !current ? null : m, s, m.gone && Number.isInteger(m.b) ? m.b : null);
       return;
     }
     if (m.id === sid) { if (s === cid && typeof m.q === 'string') gotPing(m.q); return; }
@@ -1574,13 +1574,15 @@
     if (!room || !it) return false;
     if (isHost) {
       const ok = qAddLocal(Object.assign({}, it, { by: shown() }));
-      showToast([icon(ok ? 'check-lg' : 'exclamation-circle'), h('span', { text: ok ? ' Sorba téve' : (queue.length >= Q_MAX ? ' Megtelt a sor' : ' Már a sorban van') })], 1600, '');
+      showToast([icon(ok ? 'check-lg' : 'exclamation-circle'), h('span', { text: ok ? ' Listára téve' : (queue.length >= Q_MAX ? ' Megtelt a lista' : ' Már a listán van') })], 1600, '');
       return ok;
     }
+    const why = inQueue(it.id) ? 'Már a listán van' : roomV && sameVideo('/video/' + it.id, roomV) ? 'Ez megy most' : queue.length >= Q_MAX ? 'Megtelt a lista' : '';
+    if (why) { showToast([icon('exclamation-circle'), h('span', { text: ' ' + why })], 1600, ''); return false; }
     // A videósor az 1.4-es változattól van: régebbi host nem látná a javaslatot.
     const hm = hostRec && [...members.values()].find(x => x.c === hostRec.c && !x.ghost);
     if (hm && newerVer(QUEUE_SINCE, hm.sv || '0')) {
-      showToast([icon('exclamation-circle'), h('span', { text: ' A hostnál régebbi Trash2Gether fut, még nem kezeli a sort' })], 3000, '');
+      showToast([icon('exclamation-circle'), h('span', { text: ' A hostnál régebbi Trash2Gether fut, még nem kezeli a listát' })], 3000, '');
       return false;
     }
     publish('m', { id: sid, c: cid, k: 'qadd', n: shown(), ts: Date.now(), q: rand(8), it: { id: it.id, p: it.p, t: it.t, d: it.d, s: it.s } });
@@ -1596,7 +1598,9 @@
     if (sugRate.size > 200) sugRate.clear();
     const it = qItem(Object.assign({}, m.it, { by: m.n }));
     if (!it) return;
-    if (!inQueue(it.id)) sysMsg('💡 ' + cleanName(m.n) + ' javasolta: ' + it.t);
+    // csak az kerül a chatbe, amit a host tényleg felvehet (nincs már a listán, nem ez megy épp, van hely)
+    if (inQueue(it.id) || (roomV && sameVideo('/video/' + it.id, roomV)) || queue.length >= Q_MAX) return;
+    sysMsg('💡 ' + cleanName(m.n) + ' javasolta: ' + it.t);
     if (isHost) qAddLocal(it);
   }
   // A host oldala: ha egy sorban lévő videóra került (bármi módon), az lekerül a sorról.
@@ -2330,14 +2334,14 @@ header .x.off{opacity:.5}
 .minfo{flex:1;min-width:0}
 .mname{font:600 14.5px/1.3 var(--body);color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mact{display:flex;align-items:center;gap:5px;min-width:0;max-width:100%;margin-top:2px;font:400 13px/1.35 var(--body);color:var(--sub)}
-.mact span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.mact .mtxt{flex:0 1 auto}
 .mact .bi{font-size:12px;color:var(--mu)}
 .mact.here,.mact.here .bi{color:var(--hi)}
 .mact.go{background:none;padding:0;text-align:left;cursor:pointer}
 .mact.go .bi{color:var(--btn)}
 .mact.go .bi:last-child{font-size:10px;opacity:.75}
 .mact.go:hover{color:var(--btn)}
-.mact.go:hover span{text-decoration:underline}
+.mact.go:hover .mqi{text-decoration:underline}
 .xfer{flex:none;display:flex;align-items:center;gap:5px;background:none;border:1px solid var(--btn);color:var(--btn);border-radius:var(--r);padding:5px 8px;font:700 12px/1 var(--head)}
 .xfer .bi{font-size:15px}
 .xfer:hover{background:var(--btnsoft)}
@@ -2695,15 +2699,15 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       btn('btn', 'broadcast', 'Igen', { onclick: showToRoom }),
       btn('btn sec', 'person', 'Csak én nézem', { onclick: () => { askEl.hidden = true; askDismissed = true; updateStatus(); } })));
   const statusEl = h('div', { class: 'status', hidden: 'hidden' }, askEl, tapBtn, activityEl);
-  // ---- Videósor felülete ----
-  const qCount = h('span', { text: 'Videósor' });
-  const qSearchIn = h('input', { class: 'field qin', type: 'search', placeholder: 'Keresés vagy videólink…', autocomplete: 'off', maxlength: '1500', enterkeyhint: 'search', 'aria-label': 'Videó keresése' });
+  // ---- Lista (közös videósor) felülete ----
+  const qCount = h('span', { text: 'Lista' });
+  const qSearchIn = h('input', { class: 'field qin', type: 'search', placeholder: 'Keress, vagy illessz be linket', autocomplete: 'off', maxlength: '1500', enterkeyhint: 'search', 'aria-label': 'Keresés vagy videólink' });
   const qSearchBtn = btn('btn sec qbtn', 'search', '', { type: 'button', 'aria-label': 'Keresés', title: 'Keresés', onclick: () => runSearch() });
   qSearchIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } });
   // bemásolt linknél nem kell Entert nyomni
   qSearchIn.addEventListener('paste', () => setTimeout(() => { if (parseLink(qSearchIn.value.trim())) runSearch(); }, 0));
   const qResults = h('div', { class: 'qres', hidden: 'hidden' });
-  const qHereBtn = btn('btn sec qhere', 'plus-lg', 'Ez a videó a sorba', { type: 'button', onclick: () => {
+  const qHereBtn = btn('btn sec qhere', 'plus-lg', 'Ez a videó a listára', { type: 'button', onclick: () => {
     const id = vidId(VPATH);
     if (id) suggest({ id, p: VPATH, t: pageLabel(), d: Math.round(videoLen()) });
     renderQueue();
@@ -2795,24 +2799,31 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const acts = h('div', { class: 'qacts' });
     if (mode === 'res') {
       const done = inQueue(it.id);
-      const b = btn('qb', done ? 'check-lg' : 'plus-lg', '', { type: 'button', title: done ? 'Már a sorban van' : isHost ? 'Sorba' : 'Javaslat a hostnak', 'aria-label': isHost ? 'Sorba' : 'Javaslat a hostnak',
+      const b = btn('qb', done ? 'check-lg' : 'plus-lg', '', { type: 'button', title: done ? 'Már a listán van' : isHost ? 'Listára' : 'Javaslat a hostnak', 'aria-label': isHost ? 'Listára' : 'Javaslat a hostnak',
         onclick: e => { e.stopPropagation(); if (suggest(it)) { b.replaceChildren(icon('check-lg')); b.disabled = true; } } });
       if (done) b.disabled = true;
       acts.append(b);
     } else if (isHost) {
       acts.append(btn('qb', 'play-fill', '', { type: 'button', title: 'Lejátszás most', 'aria-label': 'Lejátszás most', onclick: () => qPlay(it.id) }));
       if (idx > 0) acts.append(btn('qb', 'arrow-up', '', { type: 'button', title: 'Feljebb', 'aria-label': 'Feljebb', onclick: () => qUp(it.id) }));
-      acts.append(btn('qb', 'x-lg', '', { type: 'button', title: 'Törlés a sorból', 'aria-label': 'Törlés a sorból', onclick: () => qRemove(it.id) }));
+      acts.append(btn('qb', 'x-lg', '', { type: 'button', title: 'Törlés a listáról', 'aria-label': 'Törlés a listáról', onclick: () => qRemove(it.id) }));
     }
     return h('div', { class: 'qrow' }, img, info, acts);
   }
+  let qSig = '';
   function renderQueue() {
-    qCount.textContent = queue.length ? 'Videósor (' + queue.length + ')' : 'Videósor';
-    qList.replaceChildren(...(queue.length ? queue.map((it, i) => qRow(it, 'q', i))
-      : [h('div', { class: 'muted qnote', text: isHost ? 'A sor üres. Keress videót, vagy tedd be, amit épp nézel.' : 'A sor üres. Keress videót, és javasold a hostnak.' })]));
+    const cnt = queue.length ? 'Lista (' + queue.length + ')' : 'Lista';
+    if (qCount.textContent !== cnt) qCount.textContent = cnt;
+    // a nézők listájával együtt sokszor hívódik: csak akkor rajzoljuk újra, ha a lista (vagy az adatai) változtak,
+    // különben újraindulnának a futószalagok, és a képek is újratöltődnének
+    const sig = JSON.stringify([isHost, queue, queue.map(x => vinfo[x.id] ? vinfo[x.id].at : 0)]);
+    if (sig !== qSig || !qList.firstChild) {
+      qSig = sig;
+      qList.replaceChildren(...(queue.length ? queue.map((it, i) => qRow(it, 'q', i)) : [h('div', { class: 'muted qnote', text: 'A lista üres' })]));
+    }
     const here = vidId(VPATH);
     qHereBtn.style.display = room && here && !(roomV && sameVideo(VPATH, roomV)) && !inQueue(here) ? '' : 'none';
-    qHereBtn.querySelector('span').textContent = isHost ? 'Ez a videó a sorba' : 'Ezt a videót javaslom';
+    qHereBtn.querySelector('span').textContent = isHost ? 'Ez a videó a listára' : 'Ezt a videót javaslom';
   }
   const queueSec = section('queue', qCount, h('div', { class: 'qsearch' }, qSearchIn, qSearchBtn), qResults, qHereBtn, qList);
 
@@ -3251,8 +3262,8 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
             !m.t ? null
               : (!m.self && m.u && m.u !== location.pathname + location.search)
                 ? h('button', { class: 'mact go' + (here ? ' here' : ''), title: 'Ugrás ide: ' + m.t, onclick: () => followMember(m) },
-                    icon(ic), h('span', { text: m.t }), icon('box-arrow-up-right'))
-                : h('div', { class: 'mact' + (here ? ' here' : ''), title: m.t }, icon(ic), h('span', { text: m.t }))),
+                    icon(ic), marq('mtxt', m.t), icon('box-arrow-up-right'))
+                : h('div', { class: 'mact' + (here ? ' here' : ''), title: m.t }, icon(ic), marq('mtxt', m.t))),
           isHost && !m.self ? h('div', { class: 'mods' },
             modBtn(m, 'host', 'award', 'Host átadása neki: ' + m.n, m.n + ' lesz a host', ''),
             modBtn(m, 'kick', 'box-arrow-right', 'Kirúgás: ' + m.n, m.n + ' kirúgása', ''),
@@ -3305,11 +3316,11 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const src = tid ? location.origin + '/media/videos/tmb/' + tid + '/default.jpg' : '';
     if (src && thumbEl.getAttribute('src') !== src) thumbEl.src = src;
     setShow(thumbEl, src && src !== thumbBad);
-    const note = locked ? '🔒 Csak a host kontrollál.' : (isHost ? '🔓 Mindenki tudja kontrollálni a lejátszást.' : '');
-    setText(lockNote, note);
+    const lockTxt = locked ? '🔒 Csak a host kontrollál.' : (isHost ? '🔓 Mindenki tudja kontrollálni a lejátszást.' : '');
+    setText(lockNote, lockTxt);
     if (lockNote.classList.contains('open') === locked) lockNote.classList.toggle('open', !locked);
-    setShow(lockNote, note);
-    setShow(hostInfo, txt || note);
+    setShow(lockNote, lockTxt);
+    setShow(hostInfo, txt || lockTxt);
     updateLockUi();
     setShow(lockBtn, isHost);
     if (lockShown !== locked) {
@@ -3462,7 +3473,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   // indul, ha tényleg kilóg. (A „kevesebb animáció” rendszerbeállításnál is fut: ezt kifejezetten kérték.)
   const mqObs = typeof ResizeObserver === 'function' ? new ResizeObserver(es => es.forEach(e => fitMarq(e.target))) : null;
   function fitMarq(el) {
-    if (!el.isConnected) { mqObs.unobserve(el); return; }
+    if (!el.isConnected) { mqObs.unobserve(el); mqEls.delete(el); return; }
     const w = el.clientWidth, inner = el.firstElementChild;
     if (!w || !inner) return;
     const over = Math.ceil(Math.max(inner.scrollWidth, inner.getBoundingClientRect().width) - w);
@@ -3472,17 +3483,18 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       el.classList.add('run');
     } else el.classList.remove('run');
   }
+  const mqEls = new Set();
+  setInterval(() => { if (mqObs) mqEls.forEach(el => { if (!el.isConnected) { mqObs.unobserve(el); mqEls.delete(el); } }); }, 60000);
   function marq(cls, content) {
     const inner = h('span', { class: 'mqi' }, ...(Array.isArray(content) ? content : [content]));
     const el = h('div', { class: cls + ' mq', title: inner.textContent.replace(/\u2002/g, ' ') }, inner);
-    if (mqObs) mqObs.observe(el);
+    if (mqObs) { mqObs.observe(el); mqEls.add(el); }
     return el;
   }
   // A videó saját adatai a lejátszó alatti .card-sub dobozban vannak (feltöltő, megtekintés, kor); az oldalsáv
   // ajánlott videóinál is van szem-ikon és „… ezelőtt”, ezért csak ebben a dobozban keresünk.
   function parseVideoPage(html) {
     const d = typeof html === 'string' ? new DOMParser().parseFromString(html, 'text/html') : html;
-    const tags = [...d.querySelectorAll('meta[property="video:tag"]')].map(m => clean(m.content || '', 30).trim()).filter(Boolean).slice(0, 5);
     const sub = d.querySelector('.content-left .card-sub') || d.querySelector('.card-sub');
     const up = sub && sub.querySelector('a[href^="/user/"] .bold');
     const eye = sub && sub.querySelector('i.fa-eye, i.bi-eye-fill');
@@ -3498,7 +3510,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       if (n && !cats.includes(n)) cats.push(n);
       if (cats.length >= 4) break;
     }
-    return { ok: 1, tags, cats, u: up ? clean(up.textContent.trim(), 40) : '', views: vm ? +vm[1].replace(/\D/g, '') : null, age: am ? am[1].replace(/\s+/g, ' ') : '',
+    return { ok: 1, cats, u: up ? clean(up.textContent.trim(), 40) : '', views: vm ? +vm[1].replace(/\D/g, '') : null, age: am ? am[1].replace(/\s+/g, ' ') : '',
       lk: num('[id^="likes_video_"]'), dl: num('[id^="dislikes_video_"]') };
   }
   // Lekérési sor: egyszerre legfeljebb kettő, oldalanként legfeljebb 16. A chat kártyái előre kerülnek (a legújabb
@@ -3509,7 +3521,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (!/^\d{1,10}$/.test(id || '') || (vinfo[id] && vinfo[id].ok) || viPending.has(id)) return;
     if (id === vidId(VPATH) && document.body) {
       let r = null; try { r = parseVideoPage(document); } catch (e) {}
-      if (r && (r.u || r.cats.length || r.tags.length || r.views != null)) { viSet(id, r); return; }
+      if (r && (r.u || r.cats.length || r.views != null)) { viSet(id, r); return; }
     }
     const f = viFail.get(id);
     if (f && (f.n >= 2 || Date.now() - f.at < 30000)) return;
@@ -3705,12 +3717,12 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (!floatOn || live >= FLOAT_MAX) return;
     if (canTop && (!live || !floatLayer.matches(':popover-open'))) floatsOnTop();
     const b = floatBox();
-    const size = Math.round(44 * Math.min(1.25, Math.max(0.8, b.width / 900)) * (0.9 + Math.random() * 0.2));
+    const px = Math.round(44 * Math.min(1.25, Math.max(0.8, b.width / 900)) * (0.9 + Math.random() * 0.2));
     const spot = floatSpot(b);
     const el = h('div', { class: 'float', 'aria-hidden': 'true' }, smileyImg(f));
-    el.style.width = el.style.height = size + 'px';
-    el.style.left = Math.round(spot.x - size / 2) + 'px';
-    el.style.top = Math.round(spot.y - size / 2) + 'px';
+    el.style.width = el.style.height = px + 'px';
+    el.style.left = Math.round(spot.x - px / 2) + 'px';
+    el.style.top = Math.round(spot.y - px / 2) + 'px';
     floatLayer.append(el);
     const kill = () => el.remove();
     setTimeout(kill, 8000);
@@ -4003,7 +4015,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       if (!vc || !n || card || !wantsNext() || !canSwitch()) return;
       const braked = fastHops() >= 3 && played < 2;
       const until = Date.now() + WAIT_S * 1000;
-      const capBase = n.q ? 'Következő a sorból' : 'Következő videó';
+      const capBase = n.q ? 'Következő a listáról' : 'Következő videó';
       const cap = h('div', { class: 't2g-ncap', text: braked ? capBase : capBase + ' ' + WAIT_S + ' mp múlva' });
       const img = h('img', { class: 't2g-nimg', alt: '', src: location.origin + '/media/videos/tmb/' + n.id + '/default.jpg' });
       img.addEventListener('error', () => img.remove());
