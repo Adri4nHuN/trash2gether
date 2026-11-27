@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.23
+// @version      1.24
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -23,7 +23,7 @@
   window.__trash2gether = true;
   de.setAttribute('data-trash2gether', '');
 
-  const SCRIPT_VERSION = '1.23';
+  const SCRIPT_VERSION = '1.24';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
   const updLink = v => UPDATE_URL + (/raw\.githubusercontent\.com/.test(UPDATE_URL) && v ? '?v=' + encodeURIComponent(v) : '');
   const META_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.meta.js';
@@ -136,6 +136,16 @@
   const TITLE_MAX = 150;
   const cut = (s, n) => s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s;
   const pageTitle = () => cut(document.title.replace(/\s*-\s*Trash City\s*$/i, '').trim(), TITLE_MAX);
+  // Az oldal menüpontjai: [útvonal, felirat, ikon] – a felirat a menü magyar neve, az ikon ugyanaz, mint a menüben.
+  const SITE_PAGES = [
+    [/^\/upload\/photo$/, 'Kép feltöltés', 'pg-camera'], [/^\/upload\/video$/, 'Videó feltöltés', 'pg-upload'], [/^\/upload$/, 'Feltöltés', 'pg-upload'],
+    [/^\/static\/terms$/, 'Felhasználási feltételek', 'pg-file'], [/^\/static\/support$/, 'Támogatás', 'pg-heart'], [/^\/static\/awards$/, 'Díjak', 'pg-trophy'],
+    [/^\/feedback$/, 'Kapcsolat', 'pg-envelope'], [/^\/notices$/, 'Közlemény', 'pg-info'], [/^\/users$/, 'Közösség', 'pg-user'],
+    [/^\/forum\/20(\/|$)/, null, 'pg-forum20'], [/^\/forum\/19(\/|$)/, null, 'pg-forum19'], [/^\/forum\/6(\/|$)/, null, 'pg-forum6'],
+    [/^\/forums?(\/|$)/, null, 'pg-forum'], [/^\/categories$/, 'Kategóriák', 'pg-list'], [/^\/albums(\/|$)/, null, 'pg-picture'], [/^\/videos(\/|$)/, null, 'pg-film'], [/^$/, null, 'pg-home']
+  ];
+  const PAGE_ICONS = new Set(SITE_PAGES.map(x => x[2]));
+  const pageIcon = () => { const p = location.pathname.replace(/\/+$/, ''); const sp = SITE_PAGES.find(x => x[0].test(p)); return sp ? sp[2] : ''; };
   function pageLabel() {
     const p = location.pathname.replace(/\/+$/, '');
     if (!p) return 'Kezdőlap';
@@ -164,6 +174,14 @@
       let nm = named.find(x => document.title.includes(x)) || named[0] || '';
       if (!nm) nm = ((/^(?:Legújabb|Legnézettebb|Legjobb|Legnépszerűbb|Leghosszabb|Kiemelt|Véletlenszerű)?\s*(.+?)\s+(?:Videók|Albumok)\s+-\s+Trash City$/i.exec(document.title) || [])[1] || '');
       if (nm) return cut(nm.replace(/^[.…\s]+/, ''), 80) + ' ' + kind;
+    }
+    const sp = SITE_PAGES.find(x => x[0].test(p) && x[1]);
+    if (sp) return sp[1];
+    // fórum: /forum/<szám>/... – az oldal első címsora a fórum neve
+    if (/^\/forum\/\d+/.test(p)) {
+      const fh = document.querySelector('.well-filters h2, .well-filters h1');
+      const ft = fh && fh.textContent.replace(/\s+/g, ' ').trim();
+      if (ft) return cut(ft, TITLE_MAX);
     }
     const h1 = document.querySelector('.well-filters h1');
     const t = h1 && h1.textContent.replace(/\s+/g, ' ').trim();
@@ -924,7 +942,9 @@
   const PRESENCE_TTL = 30 * 60000;
   const presenceOf = mv => {
     const u = safePath(location.pathname + location.search);
-    return { c: cid, n: shown(), a: acct ? 1 : 0, hc: hostRec ? hostRec.c : undefined, br: client ? client.mask : undefined, v: VPATH, ui: myUi, t: u ? pageLabel() : 'Böngészik', u, j: myJoin(), tb: tabId, mv: mv || undefined, ld: ownLead() || isHost ? 1 : undefined, sv: SCRIPT_VERSION, no: myNote || undefined, at: Date.now() };
+    const lp = location.pathname.replace(/\/+$/, '');
+    const known = SITE_PAGES.some(x => x[0].test(lp)) || /^\/user(\/|$)/.test(lp);
+    return { c: cid, n: shown(), a: acct ? 1 : 0, hc: hostRec ? hostRec.c : undefined, br: client ? client.mask : undefined, v: VPATH, ui: myUi, t: u || known ? pageLabel() : 'Böngészik', u, j: myJoin(), tb: tabId, mv: mv || undefined, ld: ownLead() || isHost ? 1 : undefined, sv: SCRIPT_VERSION, no: myNote || undefined, ic: VPATH ? undefined : pageIcon() || undefined, at: Date.now() };
   };
   function announce(mv) {
     lastAnnounce = Date.now();
@@ -1303,7 +1323,7 @@
     const was = deviceOnline(c);
     if (m) {
       const mvMs = typeof m.mv === 'number' && isFinite(m.mv) ? Math.min(Math.max(m.mv, 0), 60000) : 0;
-      members.set(psid, { no: cleanNote(m.no), c: c.slice(0, 20), n: cleanName(m.n), hc: typeof m.hc === 'string' ? m.hc.slice(0, 20) : null, v: videoPath(m.v), ui: validUi(m.ui), t: clean(m.t || '', TITLE_MAX), u: safePath(m.u), j: +m.j || 0, a: !!m.a, tb: typeof m.tb === 'string' ? m.tb.slice(0, 20) : null, mv: mvMs ? Date.now() + mvMs : 0, ld: !!m.ld, at: m.at, rx: Date.now(), sv: typeof m.sv === 'string' ? m.sv.slice(0, 20) : '', br: Number.isInteger(m.br) ? m.br & ((1 << BROKERS.length) - 1) : 0 });
+      members.set(psid, { ic: typeof m.ic === 'string' && PAGE_ICONS.has(m.ic) ? m.ic : '', no: cleanNote(m.no), c: c.slice(0, 20), n: cleanName(m.n), hc: typeof m.hc === 'string' ? m.hc.slice(0, 20) : null, v: videoPath(m.v), ui: validUi(m.ui), t: clean(m.t || '', TITLE_MAX), u: safePath(m.u), j: +m.j || 0, a: !!m.a, tb: typeof m.tb === 'string' ? m.tb.slice(0, 20) : null, mv: mvMs ? Date.now() + mvMs : 0, ld: !!m.ld, at: m.at, rx: Date.now(), sv: typeof m.sv === 'string' ? m.sv.slice(0, 20) : '', br: Number.isInteger(m.br) ? m.br & ((1 << BROKERS.length) - 1) : 0 });
       dropGhost(c);
       peerVersion(m.sv);
     } else {
@@ -2559,6 +2579,23 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     'search': '<path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001q.044.06.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1 1 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0"/>',
     'note': '<path d="M3.5 1A1.5 1.5 0 0 0 2 2.5v7.8A1.5 1.5 0 0 0 3 11.7v2a.5.5 0 0 0 .82.38L6.68 11.5h5.82A1.5 1.5 0 0 0 14 10V2.5A1.5 1.5 0 0 0 12.5 1zM3 2.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 .5.5V10a.5.5 0 0 1-.5.5H6.5a.5.5 0 0 0-.32.12L4 12.6V11.2a.5.5 0 0 0-.4-.5.5.5 0 0 1-.6-.4z"/><path d="M5 4.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0 2.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3A.5.5 0 0 1 5 7"/>',
     'trash': '<path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/><path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>',
+    // az oldal menüjének ikonjai (Font Awesome 4.7 – SIL OFL 1.1 / MIT, Font Awesome Free 5.7.2 – CC BY 4.0, Bootstrap Icons 1.7.2 – MIT)
+    'pg-home': ['0 -1536 1664 1792', '<path transform="scale(1,-1)" d="M1408 544v-480q0 -26 -19 -45t-45 -19h-384v384h-256v-384h-384q-26 0 -45 19t-19 45v480q0 1 0.5 3t0.5 3l575 474l575 -474q1 -2 1 -6zM1631 613l-62 -74q-8 -9 -21 -11h-3q-13 0 -21 7l-692 577l-692 -577q-12 -8 -24 -7q-13 2 -21 11l-62 74q-8 10 -7 23.5t11 21.5 l719 599q32 26 76 26t76 -26l244 -204v195q0 14 9 23t23 9h192q14 0 23 -9t9 -23v-408l219 -182q10 -8 11 -21.5t-7 -23.5z"/>'],
+    'pg-film': ['0 -1536 1920 1792', '<path transform="scale(1,-1)" d="M384 -64v128q0 26 -19 45t-45 19h-128q-26 0 -45 -19t-19 -45v-128q0 -26 19 -45t45 -19h128q26 0 45 19t19 45zM384 320v128q0 26 -19 45t-45 19h-128q-26 0 -45 -19t-19 -45v-128q0 -26 19 -45t45 -19h128q26 0 45 19t19 45zM384 704v128q0 26 -19 45t-45 19h-128 q-26 0 -45 -19t-19 -45v-128q0 -26 19 -45t45 -19h128q26 0 45 19t19 45zM1408 -64v512q0 26 -19 45t-45 19h-768q-26 0 -45 -19t-19 -45v-512q0 -26 19 -45t45 -19h768q26 0 45 19t19 45zM384 1088v128q0 26 -19 45t-45 19h-128q-26 0 -45 -19t-19 -45v-128q0 -26 19 -45 t45 -19h128q26 0 45 19t19 45zM1792 -64v128q0 26 -19 45t-45 19h-128q-26 0 -45 -19t-19 -45v-128q0 -26 19 -45t45 -19h128q26 0 45 19t19 45zM1408 704v512q0 26 -19 45t-45 19h-768q-26 0 -45 -19t-19 -45v-512q0 -26 19 -45t45 -19h768q26 0 45 19t19 45zM1792 320v128 q0 26 -19 45t-45 19h-128q-26 0 -45 -19t-19 -45v-128q0 -26 19 -45t45 -19h128q26 0 45 19t19 45zM1792 704v128q0 26 -19 45t-45 19h-128q-26 0 -45 -19t-19 -45v-128q0 -26 19 -45t45 -19h128q26 0 45 19t19 45zM1792 1088v128q0 26 -19 45t-45 19h-128q-26 0 -45 -19 t-19 -45v-128q0 -26 19 -45t45 -19h128q26 0 45 19t19 45zM1920 1248v-1344q0 -66 -47 -113t-113 -47h-1600q-66 0 -113 47t-47 113v1344q0 66 47 113t113 47h1600q66 0 113 -47t47 -113z"/>'],
+    'pg-picture': ['0 -1536 1920 1792', '<path transform="scale(1,-1)" d="M640 960q0 -80 -56 -136t-136 -56t-136 56t-56 136t56 136t136 56t136 -56t56 -136zM1664 576v-448h-1408v192l320 320l160 -160l512 512zM1760 1280h-1600q-13 0 -22.5 -9.5t-9.5 -22.5v-1216q0 -13 9.5 -22.5t22.5 -9.5h1600q13 0 22.5 9.5t9.5 22.5v1216 q0 13 -9.5 22.5t-22.5 9.5zM1920 1248v-1216q0 -66 -47 -113t-113 -47h-1600q-66 0 -113 47t-47 113v1216q0 66 47 113t113 47h1600q66 0 113 -47t47 -113z"/>'],
+    'pg-list': ['0 -1536 1792 1792', '<path transform="scale(1,-1)" d="M256 224v-192q0 -13 -9.5 -22.5t-22.5 -9.5h-192q-13 0 -22.5 9.5t-9.5 22.5v192q0 13 9.5 22.5t22.5 9.5h192q13 0 22.5 -9.5t9.5 -22.5zM256 608v-192q0 -13 -9.5 -22.5t-22.5 -9.5h-192q-13 0 -22.5 9.5t-9.5 22.5v192q0 13 9.5 22.5t22.5 9.5h192q13 0 22.5 -9.5 t9.5 -22.5zM256 992v-192q0 -13 -9.5 -22.5t-22.5 -9.5h-192q-13 0 -22.5 9.5t-9.5 22.5v192q0 13 9.5 22.5t22.5 9.5h192q13 0 22.5 -9.5t9.5 -22.5zM1792 224v-192q0 -13 -9.5 -22.5t-22.5 -9.5h-1344q-13 0 -22.5 9.5t-9.5 22.5v192q0 13 9.5 22.5t22.5 9.5h1344 q13 0 22.5 -9.5t9.5 -22.5zM256 1376v-192q0 -13 -9.5 -22.5t-22.5 -9.5h-192q-13 0 -22.5 9.5t-9.5 22.5v192q0 13 9.5 22.5t22.5 9.5h192q13 0 22.5 -9.5t9.5 -22.5zM1792 608v-192q0 -13 -9.5 -22.5t-22.5 -9.5h-1344q-13 0 -22.5 9.5t-9.5 22.5v192q0 13 9.5 22.5 t22.5 9.5h1344q13 0 22.5 -9.5t9.5 -22.5zM1792 992v-192q0 -13 -9.5 -22.5t-22.5 -9.5h-1344q-13 0 -22.5 9.5t-9.5 22.5v192q0 13 9.5 22.5t22.5 9.5h1344q13 0 22.5 -9.5t9.5 -22.5zM1792 1376v-192q0 -13 -9.5 -22.5t-22.5 -9.5h-1344q-13 0 -22.5 9.5t-9.5 22.5v192 q0 13 9.5 22.5t22.5 9.5h1344q13 0 22.5 -9.5t9.5 -22.5z"/>'],
+    'pg-user': ['0 -1536 1280 1792', '<path transform="scale(1,-1)" d="M1280 137q0 -109 -62.5 -187t-150.5 -78h-854q-88 0 -150.5 78t-62.5 187q0 85 8.5 160.5t31.5 152t58.5 131t94 89t134.5 34.5q131 -128 313 -128t313 128q76 0 134.5 -34.5t94 -89t58.5 -131t31.5 -152t8.5 -160.5zM1024 1024q0 -159 -112.5 -271.5t-271.5 -112.5 t-271.5 112.5t-112.5 271.5t112.5 271.5t271.5 112.5t271.5 -112.5t112.5 -271.5z"/>'],
+    'pg-trophy': ['0 -1536 1664 1792', '<path transform="scale(1,-1)" d="M458 653q-74 162 -74 371h-256v-96q0 -78 94.5 -162t235.5 -113zM1536 928v96h-256q0 -209 -74 -371q141 29 235.5 113t94.5 162zM1664 1056v-128q0 -71 -41.5 -143t-112 -130t-173 -97.5t-215.5 -44.5q-42 -54 -95 -95q-38 -34 -52.5 -72.5t-14.5 -89.5q0 -54 30.5 -91 t97.5 -37q75 0 133.5 -45.5t58.5 -114.5v-64q0 -14 -9 -23t-23 -9h-832q-14 0 -23 9t-9 23v64q0 69 58.5 114.5t133.5 45.5q67 0 97.5 37t30.5 91q0 51 -14.5 89.5t-52.5 72.5q-53 41 -95 95q-113 5 -215.5 44.5t-173 97.5t-112 130t-41.5 143v128q0 40 28 68t68 28h288v96 q0 66 47 113t113 47h576q66 0 113 -47t47 -113v-96h288q40 0 68 -28t28 -68z"/>'],
+    'pg-heart': ['0 -1536 1792 1792', '<path transform="scale(1,-1)" d="M896 -128q-26 0 -44 18l-624 602q-10 8 -27.5 26t-55.5 65.5t-68 97.5t-53.5 121t-23.5 138q0 220 127 344t351 124q62 0 126.5 -21.5t120 -58t95.5 -68.5t76 -68q36 36 76 68t95.5 68.5t120 58t126.5 21.5q224 0 351 -124t127 -344q0 -221 -229 -450l-623 -600 q-18 -18 -44 -18z"/>'],
+    'pg-file': ['0 -1536 1536 1792', '<path transform="scale(1,-1)" d="M1468 1060q14 -14 28 -36h-472v472q22 -14 36 -28zM992 896h544v-1056q0 -40 -28 -68t-68 -28h-1344q-40 0 -68 28t-28 68v1600q0 40 28 68t68 28h800v-544q0 -40 28 -68t68 -28zM1152 160v64q0 14 -9 23t-23 9h-704q-14 0 -23 -9t-9 -23v-64q0 -14 9 -23t23 -9h704 q14 0 23 9t9 23zM1152 416v64q0 14 -9 23t-23 9h-704q-14 0 -23 -9t-9 -23v-64q0 -14 9 -23t23 -9h704q14 0 23 9t9 23zM1152 672v64q0 14 -9 23t-23 9h-704q-14 0 -23 -9t-9 -23v-64q0 -14 9 -23t23 -9h704q14 0 23 9t9 23z"/>'],
+    'pg-envelope': ['0 -1536 1792 1792', '<path transform="scale(1,-1)" d="M1792 826v-794q0 -66 -47 -113t-113 -47h-1472q-66 0 -113 47t-47 113v794q44 -49 101 -87q362 -246 497 -345q57 -42 92.5 -65.5t94.5 -48t110 -24.5h1h1q51 0 110 24.5t94.5 48t92.5 65.5q170 123 498 345q57 39 100 87zM1792 1120q0 -79 -49 -151t-122 -123 q-376 -261 -468 -325q-10 -7 -42.5 -30.5t-54 -38t-52 -32.5t-57.5 -27t-50 -9h-1h-1q-23 0 -50 9t-57.5 27t-52 32.5t-54 38t-42.5 30.5q-91 64 -262 182.5t-205 142.5q-62 42 -117 115.5t-55 136.5q0 78 41.5 130t118.5 52h1472q65 0 112.5 -47t47.5 -113z"/>'],
+    'pg-upload': ['0 0 512 512', '<path d="M296 384h-80c-13.3 0-24-10.7-24-24V192h-87.7c-17.8 0-26.7-21.5-14.1-34.1L242.3 5.7c7.5-7.5 19.8-7.5 27.3 0l152.2 152.2c12.6 12.6 3.7 34.1-14.1 34.1H320v168c0 13.3-10.7 24-24 24zm216-8v112c0 13.3-10.7 24-24 24H24c-13.3 0-24-10.7-24-24V376c0-13.3 10.7-24 24-24h136v8c0 30.9 25.1 56 56 56h80c30.9 0 56-25.1 56-56v-8h136c13.3 0 24 10.7 24 24zm-124 88c0-11-9-20-20-20s-20 9-20 20 9 20 20 20 20-9 20-20zm64 0c0-11-9-20-20-20s-20 9-20 20 9 20 20 20 20-9 20-20z"/>'],
+    'pg-camera': ['0 0 512 512', '<path d="M512 144v288c0 26.5-21.5 48-48 48H48c-26.5 0-48-21.5-48-48V144c0-26.5 21.5-48 48-48h88l12.3-32.9c7-18.7 24.9-31.1 44.9-31.1h125.5c20 0 37.9 12.4 44.9 31.1L376 96h88c26.5 0 48 21.5 48 48zM376 288c0-66.2-53.8-120-120-120s-120 53.8-120 120 53.8 120 120 120 120-53.8 120-120zm-32 0c0 48.5-39.5 88-88 88s-88-39.5-88-88 39.5-88 88-88 88 39.5 88 88z"/>'],
+    'pg-forum': ['0 0 16 16', '<path d="M15.502 1.94a.5.5 0 0 1 0 .706L14.459 3.69l-2-2L13.502.646a.5.5 0 0 1 .707 0l1.293 1.293zm-1.75 2.456-2-2L4.939 9.21a.5.5 0 0 0-.121.196l-.805 2.414a.25.25 0 0 0 .316.316l2.414-.805a.5.5 0 0 0 .196-.12l6.813-6.814z"/><path fill-rule="evenodd" d="M1 13.5A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5v-6a.5.5 0 0 0-1 0v6a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-11a.5.5 0 0 1 .5-.5H9a.5.5 0 0 0 0-1H2.5A1.5 1.5 0 0 0 1 2.5v11z"/>'],
+    'pg-info': ['0 0 16 16', '<path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm.93-9.412-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.47l-.451-.081.082-.381 2.29-.287zM8 5.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/>'],
+    'pg-forum20': ['0 0 16 16', '<path d="M0 2a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4.414a1 1 0 0 0-.707.293L.854 15.146A.5.5 0 0 1 0 14.793V2zm5 4a1 1 0 1 0-2 0 1 1 0 0 0 2 0zm4 0a1 1 0 1 0-2 0 1 1 0 0 0 2 0zm3 1a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/>'],
+    'pg-forum19': ['0 0 16 16', '<path d="M9.293 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.707A1 1 0 0 0 13.707 4L10 .293A1 1 0 0 0 9.293 0zM9.5 3.5v-2l3 3h-2a1 1 0 0 1-1-1zM6 6.883a.5.5 0 0 1 .757-.429l3.528 2.117a.5.5 0 0 1 0 .858l-3.528 2.117a.5.5 0 0 1-.757-.43V6.884z"/>'],
+    'pg-forum6': ['0 0 16 16', '<path d="m10.79 12.912-1.614-1.615a3.5 3.5 0 0 1-4.474-4.474l-2.06-2.06C.938 6.278 0 8 0 8s3 5.5 8 5.5a7.029 7.029 0 0 0 2.79-.588zM5.21 3.088A7.028 7.028 0 0 1 8 2.5c5 0 8 5.5 8 5.5s-.939 1.721-2.641 3.238l-2.062-2.062a3.5 3.5 0 0 0-4.474-4.474L5.21 3.089z"/><path d="M5.525 7.646a2.5 2.5 0 0 0 2.829 2.829l-2.83-2.829zm4.95.708-2.829-2.83a2.5 2.5 0 0 1 2.829 2.829zm3.171 6-12-12 .708-.708 12 12-.708.708z"/>'],
     'arrow-down': '<path fill-rule="evenodd" d="M8 1a.5.5 0 0 1 .5.5v11.793l3.146-3.147a.5.5 0 0 1 .708.708l-4 4a.5.5 0 0 1-.708 0l-4-4a.5.5 0 0 1 .708-.708L7.5 13.293V1.5A.5.5 0 0 1 8 1"/>',
     'arrow-up': '<path fill-rule="evenodd" d="M8 15a.5.5 0 0 0 .5-.5V2.707l3.146 3.147a.5.5 0 0 0 .708-.708l-4-4a.5.5 0 0 0-.708 0l-4 4a.5.5 0 1 0 .708.708L7.5 2.707V14.5a.5.5 0 0 0 .5.5"/>',
     'x-lg': '<path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z"/>',
@@ -2577,7 +2614,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     'slash-circle': '<path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/><path d="M11.354 4.646a.5.5 0 0 0-.708 0l-6 6a.5.5 0 0 0 .708.708l6-6a.5.5 0 0 0 0-.708"/>',
     'play-circle': '<path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/><path d="M6.271 5.055a.5.5 0 0 1 .52.038l3.5 2.5a.5.5 0 0 1 0 .814l-3.5 2.5A.5.5 0 0 1 6 10.5v-5a.5.5 0 0 1 .271-.445"/>',
     'arrow-repeat': '<path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41m-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9"/><path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5 5 0 0 0 8 3M3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9z"/>',
-    'house-fill': '<path d="M8.707 1.5a1 1 0 0 0-1.414 0L.646 8.146a.5.5 0 0 0 .708.708L8 2.207l6.646 6.647a.5.5 0 0 0 .708-.708L13 5.793V2.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v1.293z"/><path d="m8 3.293 6 6V13.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 13.5V9.293z"/>',
     'file-earmark-text': '<path d="M5.5 7a.5.5 0 0 0 0 1h5a.5.5 0 0 0 0-1zM5 9.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0 2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5"/><path d="M9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.5zm0 1v2A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z"/>'
   };
   const iconTpl = new Map();
@@ -3465,16 +3501,16 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const isHostEntry = m => !!(hostRec && hostConfirmed && m.c === hostRec.c && (!hostRec.tab || m.tb === hostRec.tab));
     members.forEach(m => { const o = byDevice.get(m.c); if (!o || (!isHostEntry(o) && (isHostEntry(m) || (m.ld && !o.ld)))) byDevice.set(m.c, m); });
     const others = [...byDevice.values()].map(m => Object.assign({}, m, { h: isHostEntry(m) }));
-    const list = [{ n: shown(), self: true, h: isHost, ui: myUi, v: VPATH, t: pageLabel(), u: location.pathname + location.search, no: myNote }, ...others];
+    const list = [{ ic: VPATH ? '' : pageIcon(), n: shown(), self: true, h: isHost, ui: myUi, v: VPATH, t: pageLabel(), u: location.pathname + location.search, no: myNote }, ...others];
     setText(countEl, 'Nézők (' + list.length + ')');
     setText(roomNum, String(list.length));
     const here0 = location.pathname + location.search;
     const sig = JSON.stringify([isHost, roomV, here0, modArmed && [modArmed.c, modArmed.act],
-      list.map(m => [m.n, m.self ? 1 : 0, m.h ? 1 : 0, m.ui, m.v, m.t, m.u, m.ghost ? 1 : 0, m.c, m.tb, m.a ? 1 : 0, m.no || ''])]);
+      list.map(m => [m.n, m.self ? 1 : 0, m.h ? 1 : 0, m.ui, m.v, m.t, m.u, m.ghost ? 1 : 0, m.c, m.tb, m.a ? 1 : 0, m.no || '', m.ic || ''])]);
     if (sig !== membersSig || membersEl.childElementCount !== list.length) {
       membersSig = sig;
       membersEl.replaceChildren(...list.map(m => {
-        const ic = m.ghost ? 'arrow-repeat' : m.v ? 'play-fill' : (m.t === 'Kezdőlap' ? 'house-fill' : 'file-earmark-text');
+        const ic = m.ghost ? 'arrow-repeat' : m.v ? 'play-fill' : m.ic || (m.t === 'Kezdőlap' ? 'pg-home' : 'file-earmark-text');
         const here = m.v && roomV && sameVideo(m.v, roomV);
         return h('div', { class: 'member' + (m.ghost ? ' ghost' : '') },
           avatarEl(m.n, m.ui),
