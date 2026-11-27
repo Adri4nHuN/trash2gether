@@ -1541,7 +1541,7 @@
     qV = nextVer(qV);
     saveQueue();
     publish('q', queueMsg(), true);
-    renderQueue();
+    renderMembers();   // a lista és a fenti értesítés („Listán van”) is
   }
   function onQueue(m) {
     if (!m || !Array.isArray(m.list) || m.list.length > Q_MAX || !okVer(m.v)) return;
@@ -1550,7 +1550,7 @@
     qV = m.v;
     queue = m.list.map(qItem).filter(Boolean);
     saveQueue();
-    renderQueue();
+    renderMembers();
   }
   function qAddLocal(it) {
     if (!it || inQueue(it.id) || queue.length >= Q_MAX) return false;
@@ -2383,7 +2383,11 @@ a.qb{text-decoration:none}
 .hinfo{display:flex;flex-direction:column;gap:4px;font-size:13px}
 .hinfo .locknote{margin-top:0}
 .vcard{display:flex;align-items:center;gap:10px;padding:6px 8px 6px 6px;border:1px solid var(--bd);border-radius:var(--r);background:var(--bg);cursor:pointer;min-width:0;transition:border-color .15s}
-.vcard:hover{border-color:var(--btn)}
+.vcard:hover,.vcard:focus-visible{border-color:var(--btn);outline:0}
+.vcard>.bi{flex:none;color:var(--btn);font-size:18px}
+.notice{display:flex;flex-direction:column;gap:8px}
+.nbtns{display:flex;flex-wrap:wrap;gap:6px}
+.nbtns .btn{flex:1 1 0;min-width:110px;width:auto}
 .vthumb{flex:none;width:80px;aspect-ratio:16/9;object-fit:cover;border-radius:4px;background:var(--s2)}
 .vinfo{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .vcap{font:600 12px/1.2 var(--body);color:var(--mu)}
@@ -2645,20 +2649,44 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   let thumbBad = '';
   thumbEl.addEventListener('error', () => { thumbBad = thumbEl.getAttribute('src'); thumbEl.style.display = 'none'; });
   const vcapEl = h('div', { class: 'vcap' }), vtitleEl = h('div', { class: 'vtitle' });
-  const vcard = h('div', { class: 'vcard', onclick: () => jumpBtn.click() }, thumbEl, h('div', { class: 'vinfo' }, vcapEl, vtitleEl));
-  const jumpBtn = btn('btn', 'arrow-right-circle', 'Visszaugrás', { onclick: () => {
+  // a szoba videójára (vissza): a kártyára kattintva; ha ugyanez a videó van itt, ez a lap veszi át
+  function jumpBack() {
     const p = videoPath(roomV);
     if (!p) return;
     if (VPATH && sameVideo(VPATH, p)) { takeOver(false); return; }
     navigating = true;
     claimLead(true);
     openVideo(p);
-  } });
+  }
+  const vcard = h('div', { class: 'vcard', role: 'button', tabindex: '0', onclick: jumpBack,
+    onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jumpBack(); } } },
+    thumbEl, h('div', { class: 'vinfo' }, vcapEl, vtitleEl), icon('arrow-right-circle'));
+  const jumpBtn = btn('btn', 'play-circle', 'Nézés itt', { onclick: jumpBack });
   const lockBtn = btn('btn sec', 'lock', 'Korlátozás', { onclick: () => setLock(!locked) });
   const lockNote = h('div', { class: 'locknote' });
   const hostInfo = h('div', { class: 'hinfo' }, hostTxt, lockNote);
+  // Értesítés a panel tetején, ha ezen a lapon nem a szoba videója van (vagy egy másik lapodon nézed):
+  // Ezt nézzük (a szoba is ezt nézze) – Listához adás (a lista végére) – Bezárás (itt nézed, a másik lap megáll).
   const showBtn = btn('btn', 'broadcast', 'Ezt nézzük', { title: 'A szoba is ezt a videót nézze', onclick: showToRoom });
-  const hostBox = h('div', { class: 'box hbox' }, hostInfo, vcard, jumpBtn, showBtn, lockBtn);
+  const noticeAdd = btn('btn sec', 'plus-lg', 'Listához adás', { title: 'Ez a videó a lista végére', onclick: () => {
+    const id = vidId(VPATH);
+    if (id && suggest({ id, p: VPATH, t: pageLabel(), d: Math.round(videoLen()) })) drawHost();
+  } });
+  const noticeClose = btn('btn sec', 'x-lg', 'Bezárás', { title: 'Itt nézed tovább; a másik lapon megáll a videó', onclick: closeNotice });
+  const noticeEl = h('div', { class: 'box notice', style: 'display:none' }, vcard, h('div', { class: 'nbtns' }, showBtn, noticeAdd, noticeClose));
+  let noticeOff = sess.get('tcwt_noticeoff') || '';
+  const noticeKey = () => (vidId(roomV) || '-') + '|' + (vidId(VPATH) || location.pathname);
+  function closeNotice() {
+    noticeOff = noticeKey();
+    sess.set('tcwt_noticeoff', noticeOff);
+    askEl.hidden = true; askDismissed = true;
+    // ez a lap lesz a szobában az aktív: a másik lapodon (ha ott ment) megáll a videó
+    if (room) claimLead(false);
+    const v = getVideo();
+    if (v && v.paused && !v.ended) { expectEv('play'); v.play().catch(() => {}); }
+    drawHost(); updateStatus();
+  }
+  const hostBox = h('div', { class: 'box hbox' }, hostInfo, jumpBtn, lockBtn);
   const countEl = h('span');
   const banTitle = h('div', { class: 'muted' });
   const banList = h('div');
@@ -2905,6 +2933,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   const searchSec = section('search', h('span', { text: 'Keresés' }), h('div', { class: 'qsearch' }, qSearchIn, qSearchBtn), qResults, qHereBtn);
 
   const liveEl = h('div', { class: 'top live', role: 'tabpanel' },
+    noticeEl,
     section('members', countEl,
       membersEl,
       banBox,
@@ -3353,7 +3382,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     drawHost();
     updateMore();
   }
-  let membersSig = '', bansSig = '', jumpMode = '', lockShown = null;
+  let membersSig = '', bansSig = '', lockShown = null;
   const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };
   const setShow = (el, on) => { const d = on ? '' : 'none'; if (el.style.display !== d) el.style.display = d; };
   const setTitle = (el, t) => { if (el.title !== t) el.title = t; };
@@ -3380,18 +3409,23 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   function drawHost() {
     renderBans();
     let txt = '', cap = '', mode = '';
-    if (isHost && roomV && !sameVideo(roomV, VPATH)) { txt = '👑 Te vagy a host.'; cap = 'Szoba videója'; mode = 'go'; }
+    if (isHost && roomV && !sameVideo(roomV, VPATH)) { txt = '👑 Te vagy a host.'; cap = 'A szoba videója:'; mode = 'go'; }
     else if (isHost) txt = VPATH ? '👑 Te vagy a host.' : '👑 Te vagy a host – nyiss meg egy videót.';
     else if (roomV && !isLead() && sameVideo(roomV, VPATH)) { txt = 'Másik lapon nézed.'; mode = 'here'; }
-    else if (roomV && !sameVideo(roomV, VPATH)) { cap = isLead() ? 'A host ezt nézi' : 'Másik lapon nézed'; mode = 'go'; }
-    if (mode && mode !== jumpMode) jumpBtn.replaceChildren(icon(mode === 'here' ? 'play-circle' : 'arrow-right-circle'), h('span', { text: mode === 'here' ? 'Nézés itt' : 'Visszaugrás' }));
-    if (mode) jumpMode = mode;
+    else if (roomV && !sameVideo(roomV, VPATH)) { cap = isLead() ? 'A host ezt nézi:' : 'Másik lapon ezt nézed:'; mode = 'go'; }
     setText(hostTxt, txt);
     setShow(hostTxt, txt);
     setText(vcapEl, cap);
     setText(vtitleEl, roomVT || (isHost ? 'Előző videó' : 'Másik videó'));
     setTitle(vcard, (roomVT || '') + (roomVT ? ' – ' : '') + 'kattints a visszaugráshoz');
-    setShow(vcard, mode === 'go');
+    const noticeOn = mode === 'go' && noticeOff !== noticeKey();
+    setShow(noticeEl, noticeOn);
+    if (noticeOn) {
+      const id = vidId(VPATH), had = !!id && inQueue(id);
+      setShow(noticeAdd, !!id);
+      noticeAdd.disabled = had;
+      setText(noticeAdd.querySelector('span'), had ? 'Listán van' : 'Listához adás');
+    }
     const tid = mode === 'go' && vidId(roomV);
     const src = tid ? location.origin + '/media/videos/tmb/' + tid + '/default.jpg' : '';
     if (src && thumbEl.getAttribute('src') !== src) thumbEl.src = src;
@@ -3408,9 +3442,9 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       lockBtn.replaceChildren(icon(locked ? 'unlock' : 'lock'), h('span', { text: locked ? 'Feloldás' : 'Korlátozás' }));
       lockBtn.title = locked ? 'Mindenki kontrollálhassa a lejátszást' : 'Csak a host kontrollálhassa a lejátszást';
     }
-    setShow(hostBox, txt || cap || locked || isHost);
-    setShow(jumpBtn, mode);
-    setShow(showBtn, hostDevice() && !isHost && VPATH && !sameVideo(VPATH, roomV));
+    setShow(hostBox, txt || locked || isHost);
+    setShow(jumpBtn, mode === 'here');
+    setShow(showBtn, hostDevice() && VPATH && !sameVideo(VPATH, roomV));
   }
 
   function pushNode(node) {
