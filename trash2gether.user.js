@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.22
+// @version      1.23
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -18,31 +18,16 @@
 
 (function () {
   'use strict';
-  // A jelző a lapon (DOM) van, nem csak a script saját világában: így ha a userscript és a böngészőbővítmény
-  // is telepítve van, csak az egyik fut.
   const de = document.documentElement;
   if (window.__trash2gether || de.hasAttribute('data-trash2gether')) return;
   window.__trash2gether = true;
   de.setAttribute('data-trash2gether', '');
 
-  // A fejléc @version sorával egyezzen (a release.py mindkettőt egyszerre írja át).
-  const SCRIPT_VERSION = '1.22';
-  // Ha valaki a szobában újabb változatot használ, felajánljuk a frissítést. A Tampermonkey a .user.js címet
-  // megnyitva rögtön a frissítő oldalát mutatja; a bővítmény-kiadásban ez a projekt oldalára mutat (build.py).
+  const SCRIPT_VERSION = '1.23';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
-  // Saját frissítés-figyelés: a Tampermonkey alapból csak naponta egyszer néz rá, ezért mi is megnézzük (legfeljebb
-  // félóránként) a kiadott fejlécet, és ha újabb van, szólunk egy kattintható értesítéssel.
-  // A GitHub a fájlokat legfeljebb 5 percig gyorsítótárból adja: a verziót a címbe téve mindig a friss jön le.
   const updLink = v => UPDATE_URL + (/raw\.githubusercontent\.com/.test(UPDATE_URL) && v ? '?v=' + encodeURIComponent(v) : '');
   const META_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.meta.js';
-  // Több nyilvános MQTT szerverre kapcsolódunk egyszerre, és mindegyikre ugyanazt küldjük; elég, ha kettőnek van
-  // közös szervere. A népszerű HaGeZi DNS-/reklámszűrő listák (Pi-hole, AdGuard Home, NextDNS, uBlock Origin-be
-  // importálva) tiltják a broker.emqx.io-t (és a HiveMQ-t is), aki ilyet használ, a többin át van a szobában.
-  // Az Eclipse szerver böngészős (WebSocket) elérése 2026 végén nem működött, ezért jött a Mosquitto; az Eclipse a
-  // helyén marad (a sorrend a régebbi változatokkal közös), ha visszajön, azt is használjuk. A Mosquitto nem küldi
-  // el a „végakaratot”, ott a lezárt lapot a búcsúüzenet és a jelenlét lejárta jelzi.
   const BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://mqtt.eclipseprojects.io:443/mqtt', 'wss://test.mosquitto.org:8081/mqtt'];
-  // tcwt10: aláírt üzenetek. A régebbi (aláírás nélküli) változatok más csatornán vannak, nem keverednek.
   const PREFIX = 'tcwt10/', OLD_PREFIX = 'tcwt9/';
   const KDF_SALT = 'trash2gether-room-v9';
   const KDF_ITER = 200000;
@@ -69,9 +54,8 @@
     'bariadd.png', 'diki.png', 'xpontx.png', 'kaki.png'
   ];
   const SMILEY_SET = new Set(SMILEYS);
-  const TOKEN = /\[s:([^\]\s]{1,80})\]/g;   // smiley a szövegben: [s:fájlnév]
+  const TOKEN = /\[s:([^\]\s]{1,80})\]/g;
 
-  // Ugyanazok a gépelhető kódok, amiket a Trash City hozzászólásai is átalakítanak (kipróbálva az oldalon).
   const SMILEY_SYMBOLS = {
     '<3': 'kacsacs%C5%91r-balra-z%C3%A1r%203.png', '(y)': '(y).png', '>:(': 'kacsacs%C5%91r-balra-nyit%20kettospont%20(.png',
     ':@': 'kettospont%20@.png', ':)': 'kettospont%20).png', ':D': 'kettospont%20D.png', 'XD': 'XD.png',
@@ -79,7 +63,6 @@
     ':I': 'kettospont%20I.png', ':(': 'kettospont%20(.png', ":'(": "kettospont%20'(.png", ':P': 'kettospont%20P.png',
     ':O': 'kettospont%20O.png', ':x': 'kett%C5%91spont%20x.png', 'x.x': 'xpontx.png'
   };
-  // A szavas smiley-k kettősponttal kezdődnek (pl. :hete). Ékezet nélkül és a végén lévő szám nélkül is elfogadjuk.
   const smileyName = f => { try { return decodeURIComponent(f).replace(/\.png$/i, ''); } catch (e) { return f; } };
   const fold = w => w.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const SMILEY_WORDS = new Map();
@@ -105,10 +88,8 @@
     }).join('');
   }
   const smileyUrl = f => SMILEY_BASE + f;
-  // Állapot-üzenet (note): csak latin betűk, számok, néhány írásjel és az oldal smiley-jai. Minden más (emoji,
-  // vezérlőkarakter, <, >, {, }, [, ], `, \, = stb.) kiesik – a fogadó oldalon is, nem csak a beíráskor.
   const NOTE_TEXT_MAX = 80, NOTE_SMILEY_MAX = 6;
-  const NOTE_CHAR = /[A-Za-z0-9\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F .,!?:;()'"%+\/&#-]/;   // ékezetes latin: ő, ű is
+  const NOTE_CHAR = /[A-Za-z0-9\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F .,!?:;()'"%+\/&#-]/;
   const noteChars = t => Array.from(String(t || '')).filter(ch => NOTE_CHAR.test(ch)).join('');
   function cleanNote(raw) {
     if (typeof raw !== 'string') return '';
@@ -129,8 +110,7 @@
   });
   const store = mk(() => localStorage);
   const sess = mk(() => sessionStorage);
-  // videókártyák adatai (lásd parseVideoPage)
-  const VI_KEY = 'tcwt_vi3', VI_MAX = 40;   // 3: kategóriák is (a régebbi tárolt adatokból hiányoznak)
+  const VI_KEY = 'tcwt_vi3', VI_MAX = 40;
   try { sessionStorage.removeItem('tcwt_vi'); sessionStorage.removeItem('tcwt_vi2'); } catch (e) {}
   let vinfo = readSessJSON(VI_KEY);
   if (!vinfo || typeof vinfo !== 'object' || Array.isArray(vinfo)) vinfo = {};
@@ -142,15 +122,8 @@
   const sameVideo = (a, b) => !!vidId(a) && vidId(a) === vidId(b);
   const noDots = p => !/\/\.|%2e/i.test(p);
   const videoPath = p => typeof p === 'string' && p.length < 400 && /^\/video\/\d+(?:\/[^\s?#\\/]*)?$/.test(p) && noDots(p) ? p : null;
-  // Nagyon hosszú (sok ékezetes, kódolt betűs) vagy szokatlan címnél a többiek elvetnék az útvonalat – ilyenkor
-  // a rövid /video/<id> formát küldjük, azt is kiszolgálja az oldal.
   const VPATH = vidId(location.pathname) ? (videoPath(location.pathname) || '/video/' + vidId(location.pathname)) : null;
-  // Videóváltáskor ?t= paraméterrel nyitjuk meg az oldalt (a Trash City lejátszója ebből indul, és így nem a
-  // saját mentett pozíciódra ugrik). Mire ez lefut, a lejátszó már beolvasta, ezért kivesszük a címből.
   const URL_T = /[?&]t=/.test(location.search);
-  // A Trash City lejátszója a 4 percnél hosszabb videóknál megjegyzi, hol hagytad abba, és onnan folytatja.
-  // Ha ez a hely a videó legvége (pl. mert a szinkron a host végén 0,25 mp-cel a vége előtt tartotta a videót),
-  // a videó megnyitáskor rögtön véget ér, és az automatikus lejátszás azonnal továbbugrik: ezt javítjuk.
   const RESUME_KEY = VPATH ? 'videoPlaybackPosition_' + vidId(VPATH) : '';
   const resumeAt = (() => { try { return RESUME_KEY ? parseFloat(localStorage.getItem(RESUME_KEY)) : NaN; } catch (e) { return NaN; } })();
   if (VPATH && sess.get('tcwt_tq') === vidId(VPATH) && /[?&]t=/.test(location.search)) {
@@ -166,8 +139,6 @@
   function pageLabel() {
     const p = location.pathname.replace(/\/+$/, '');
     if (!p) return 'Kezdőlap';
-    // Profiloldalak (bárkié): /user[/<név>][/videos|/albums|/favorite/videos|/favorite/photos]. A saját profil
-    // /user címen is elérhető: ott a név a fiókodból (vagy az oldal címéből) jön.
     const u = p.match(/^\/user(?:\/([^/]+))?(\/.*)?$/);
     if (u) {
       let n = '';
@@ -178,13 +149,10 @@
         : /^\/favorite\/videos(\/|$)/.test(sub) ? ' - Kedvenc videók' : /^\/favorite\/photos(\/|$)/.test(sub) ? ' - Kedvenc képek' : '';
       if (n && tab && !RESERVED.test(n)) return cut(n.trim(), 60) + tab;
     }
-    // Kategória: /videos/<kategória> → „Alkesz Mobil videók”, /albums/<kategória> → „Alkesz Mobil albumok”;
-    // a kategória nélküliek: „Kategória nélküli videók / albumok”. A nevet az oldal saját linkjéből vesszük.
     const c = p.match(/^\/(videos|albums)\/([^/]+)/);
     if (c) {
       const kind = c[1] === 'videos' ? 'videók' : 'albumok';
       if (/kategoria-nelkul/i.test(c[2])) return 'Kategória nélküli ' + kind;
-      // több link is ide mutat („Összes” szűrő, a kategória neve): azt választjuk, amelyik a lap címében is szerepel
       const cands = [];
       for (const a of document.querySelectorAll('a[href]')) {
         let ap = ''; try { ap = new URL(a.getAttribute('href'), location.origin).pathname.replace(/\/+$/, ''); } catch (e) { continue; }
@@ -206,8 +174,6 @@
   const cleanName = s => clean(s).replace(/\u{1F451}/gu, '').replace(/\(te\)\s*$/i, '').trim() || '?';
   const norm = s => String(s || '').trim().toLowerCase();
   const getVideo = () => VPATH ? (document.querySelector('video#video, .video-container video, .video-js video, video.vjs-tech') || document.querySelector('video')) : null;
-  // Időbélyeges elem a sorból: a Trash City lejátszója a ?t= paramétert csak 4 percnél hosszabb videónál veszi
-  // figyelembe, a rövidebbeknél mi tekerünk oda (egyszer, betöltéskor).
   {
     const o = VPATH ? readSessJSON('tcwt_qs') : null;
     sess.del('tcwt_qs');
@@ -222,7 +188,7 @@
     if (at && !fix()) setTimeout(fix, 600);
   }
 
-  let cid = '';   // az eszköz azonosítója: a saját kulcsából számolódik (lent, idReady)
+  let cid = '';
   const sid = rand(10);
   let tabId = sess.get('tcwt_tab');
   if (!tabId) { tabId = rand(10); sess.set('tcwt_tab', tabId); }
@@ -248,8 +214,6 @@
   let goneMsg = '', byeMsg = '', byeAt = 0, navIntent = 0;
   const expect = { play: 0, pause: 0, seek: 0 };
   let expectTimer = null;
-  // A következő képkockánál rajzolunk; de ha a böngésző épp nem rajzol (pl. teljesen eltakart ablak, beágyazott
-  // panel), a requestAnimationFrame nem fut le – ilyenkor időzítő a tartalék, hogy a lista azért frissüljön.
   const nextFrame = f => {
     if (document.hidden) { setTimeout(f, 30); return; }
     let done = false;
@@ -273,7 +237,6 @@
   let roomKey = null, roomTopic = '';
   const T = s => PREFIX + roomTopic + '/' + s;
   const enc = new TextEncoder(), dec = new TextDecoder();
-  // Natív base64 (Chrome 140+, Firefox 133+, Safari 18.2+), régebbi böngészőn a klasszikus út.
   const toB64 = typeof Uint8Array.prototype.toBase64 === 'function' ? u8 => u8.toBase64()
     : u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000)); return btoa(s); };
   const fromB64 = typeof Uint8Array.fromBase64 === 'function' ? s => Uint8Array.fromBase64(s)
@@ -313,9 +276,6 @@
     } catch (e) { return null; }
   }
 
-  // ---------- Aláírás. Minden eszköznek saját ECDSA kulcspárja van (a böngészőben marad), az eszköz azonosítója
-  // a nyilvános kulcs ujjlenyomata, és minden üzenet alá van írva. Így a szoba kódjával sem lehet más nevében
-  // írni: hostnak, kitiltónak, kirúgónak kiadni magát, más búcsúját vagy chatüzenetét hamisítani.
   const SIG_KEY = { name: 'ECDSA', namedCurve: 'P-256' }, SIG_ALG = { name: 'ECDSA', hash: 'SHA-256' };
   const fpOf = async pk => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', fromB64(pk))).subarray(0, 16), b => (b % 36).toString(36)).join('');
   let signKey = null, myPk = '';
@@ -331,15 +291,13 @@
       const kp = await crypto.subtle.generateKey(SIG_KEY, true, ['sign', 'verify']);
       const p = toB64(new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey)));
       const d = await crypto.subtle.exportKey('jwk', kp.privateKey);
-      try { id = await load(store.get('tcwt_id')); } catch (e) {}   // egy másik lap közben már létrehozta
+      try { id = await load(store.get('tcwt_id')); } catch (e) {}
       if (!id) { store.set('tcwt_id', JSON.stringify({ p, d })); id = { k: kp.privateKey, p, c: await fpOf(p) }; }
     }
     signKey = id.k; myPk = id.p; cid = id.c;
     store.set('tcwt_cid', cid);
   })();
   const roomTag = topic => String(topic || roomTopic).slice(0, 8);
-  // Az aláírt szöveg: JSON + sortörés + aláírás. Benne van a csatorna (_t) és a szoba (_r) is, így egy aláírt
-  // üzenet nem játszható vissza másik csatornán (pl. egy búcsú host-bejegyzésként) vagy másik szobában.
   function signedBody(sub, obj, topic) {
     return JSON.stringify(Object.assign({}, obj, { _t: sub, _r: roomTag(topic), pk: myPk }));
   }
@@ -363,7 +321,7 @@
     let ok = false;
     try { ok = await crypto.subtle.verify(SIG_ALG, k.key, fromB64(txt.slice(i + 1)), enc.encode(body)); } catch (e) {}
     if (!ok) return null;
-    m._s = k.c;   // az aláíró eszköz – ez az egyetlen megbízható „ki küldte”
+    m._s = k.c;
     return m;
   }
 
@@ -437,9 +395,6 @@
     return a;
   }
 
-  // ---------- A szerverek együtt egy kliensként: az üzenet azon megy ki, amelyik épp elérhető (ha egyik sem,
-  // rövid ideig várakozik), a mindkettőn beérkező ugyanazon üzenet csak egyszer számít. Az újrakapcsolódás
-  // szerverenként, növekvő várakozással megy, így egy letiltott szervert sem ostromol 3 mp-enként.
   const RECONNECT_MS = 3000;
   function brokerSet(optsOf, autoReconnect) {
     const on = {}, subs = [], seen = new Map(), queue = [];
@@ -554,8 +509,6 @@
     catch (e) { setConn('err'); setActivity('Ez a böngésző nem támogatott.'); return; }
     if (room !== code || client) return;
     roomKey = keys.key; roomTopic = keys.topic;
-    // A „végakarat” (a szerver küldi el, ha a kapcsolat váratlanul megszakad) szerverenként külön: benne van, melyik
-    // szerverről esett le a lap. Így ha csak az egyik kapcsolata szakad meg, a többiek nem hiszik, hogy kilépett.
     let wills;
     try {
       const at = Date.now();
@@ -572,16 +525,12 @@
       clean: true,
       will: { topic: T('p/' + sid), payload: wills[i], retain: true, qos: 0 }
     }), true);
-    // Egy újabb szerver is elérhetővé vált: ott is feliratkozunk (azt a szerverkészlet intézi), és ott is
-    // megjelenünk – hostként a szoba adataival együtt.
     client.on('extra', () => {
       if (room !== code) return;
       setConn('ok');
       announce();
       if (isHost) refreshRetained();
     });
-    // Ha az egyik szerverrel megszakad a kapcsolat (de a másikkal él), jelezzük: így ha később a lap váratlanul
-    // bezárul, a megmaradt szerver végakarata egyedül is elég ahhoz, hogy a többiek lássák, kilépett.
     let lastMask = 0, maskTimer = null;
     client.on('change', () => {
       if (room !== code || !client || !client.connected) return;
@@ -607,8 +556,6 @@
       setConn('ok');
       restoreKnown(code);
       renderMembers();
-      // Az állapot jöjjön a host-bejegyzés előtt (a szerver a feliratkozás sorrendjében küldi a visszatartott
-      // üzeneteket): így a host új lapja előbb a szoba pozíciójára áll, és csak utána irányít.
       client.subscribe([T('state'), T('m'), T('h'), T('host'), T('cfg'), T('q'), T('ban'), T('p/+'), OLD_PREFIX + roomTopic + '/p/+']);
       announce();
       if (isHost) sendState();
@@ -620,7 +567,6 @@
         if (room !== code || nth !== connects) return;
         settleUntil = 0;
         if (!hostConfirmed) {
-          // Nem jött host-bejegyzés (pl. valaki felülírta a helyét). Az előző oldalról ismert host marad, ha itt van.
           if (hostRec && devPresent(hostRec.c)) setHostRec(hostRec, true);
           else {
             hostConfirmed = true;
@@ -635,13 +581,10 @@
       requestFollowPos();
       setTimeout(sendPing, 1000);
       setTimeout(() => { if (room) publish('m', { id: sid, c: cid, k: 'histreq' }); }, 800);
-      // Ha addig semmilyen érvényes előzmény nem jött (pl. valaki „válaszolt” helyettük szeméttel), még egyszer kérjük.
       histOk = false;
       setTimeout(() => { if (room === code && nth === connects && !histOk && members.size) publish('m', { id: sid, c: cid, k: 'histreq' }); }, 6000);
     });
     client.on('message', onMessage);
-    // A kapcsolat bontásakor azonnal jelezzük (eddig a következő próbálkozásig „Csatlakozva” maradt),
-    // hiba után is csak „Csatlakozás…”, mert a kliens magától újrapróbálja.
     const lost = () => {
       if (!client || client.connected) return;
       if (!lostAt) lostAt = Date.now();
@@ -707,7 +650,6 @@
     if (hostPresent()) { hostGoneSince = 0; hostByeAt = 0; return; }
     if (!hostGoneSince) { hostGoneSince = Date.now(); return; }
     const gone = Date.now() - hostGoneSince;
-    // Ha a host bezárta a lapot (búcsút küldött), nem várunk 20 mp-et: pár mp az újratöltésre, utána jöhet az új host.
     const grace = hostRec && deviceOnline(hostRec.c) ? 60000 : (Date.now() - hostByeAt < 60000 ? 10000 : HOST_GRACE);
     if (gone < grace) return;
     let list = candidates(hostRec && hostRec.c);
@@ -786,8 +728,6 @@
     sysMsg('Tiltás feloldva: ' + b.n, 'ban:' + c);
     renderMembers();
   }
-  // Tiltólista és beállítás csak a hosttól jöhet. Ha még nem tudjuk, ki a host (csatlakozás eleje), vagy
-  // a küldő később lesz host, félretesszük, és akkor érvényesítjük.
   function waitAuth(kind, m) {
     const w = authWait[kind], old = w.get(m._s);
     if (old && old.v >= m.v) return;
@@ -804,8 +744,6 @@
   }
   function onBans(m, retained) {
     if (!Array.isArray(m.list) || !okVer(m.v)) return;
-    // Csatlakozás közben csak akkor, ha a jelenlévők többsége is őt tartja hostnak: egy hamis „host” listája
-    // különben kitilthatná az igazi hostot (és akkor az üzeneteit sem látnánk).
     if (!hostRec || m._s !== hostRec.c || !hostTrusted()) { waitAuth('ban', m); return; }
     if (m.v < bansV) return;
     const prev = bans;
@@ -824,7 +762,6 @@
   function onKick(m) {
     if (!hostConfirmed || !hostRec || m._s !== hostRec.c || !hostTrusted() || typeof m.to !== 'string' || !fresh(m)) return;
     if (m.to === cid) {
-      // Ugyanazt a kirúgást (pl. valaki visszajátssza, amikor visszajöttünk) csak egyszer vesszük figyelembe.
       let used = [];
       try { used = JSON.parse(store.get('tcwt_kq') || '[]'); } catch (e) {}
       if (!Array.isArray(used)) used = [];
@@ -844,10 +781,6 @@
     togglePanel(true);
   }
 
-  // Ki a host? Az aláírások miatt a szerepet csak a mostani host adhatja át (vagy viheti át másik lapjára), magát
-  // pedig csak az jelölheti ki, aki már nem látja a hostot (választás). Ha két bejegyzés ütközik (pl. valaki a host
-  // jelenlétében hirdette ki magát, vagy kapcsolatszakadás alatt választottak új hostot), az nyer, akit a szobában
-  // lévők hostnak tartanak (a jelenlétükben küldik). Csatlakozás után pár mp-ig gyűjtünk, aztán döntünk.
   const SETTLE_MS = 4000;
   let settleUntil = 0, leaving = false, hostSince = 0, connects = 0, lostAt = 0, outage = 0, hostInherited = false;
   const settling = () => Date.now() < settleUntil;
@@ -868,11 +801,7 @@
     members.forEach(x => { if (x.hc) voters.add(x.c); });
     return votes(hostRec.c) * 2 > voters.size;
   }
-  // Döntetlennél a régi host maga csak akkor adja át a szerepet, ha tényleg távol volt (megszakadt a kapcsolata,
-  // vagy egy korábbi oldalról örökölt hostként nem lapváltással töltődött be) – különben valaki a jelenlétében
-  // hirdette ki magát.
   const yieldOk = () => Date.now() - connectedAt < SETTLE_MS + 3000 && (outage >= 8000 || (connects === 1 && !cameByNav && hostInherited));
-  // initial: a csatlakozás utáni döntés. Később az eltűnt host helyett a választás (türelmi idővel) dönt, nem ez.
   function beats(a, b, initial) {
     const pa = devPresent(a.c);
     if (!b) return pa;
@@ -903,7 +832,6 @@
     if (!cur || (rec.ts >= cur.ts && (s === cur.c || (s === rec.c && !settling() && !hostPresent())))) { setHostRec(rec, retained); return; }
     if (rec.c === cur.c) return;
     if (!settling() && Date.now() - hostSince >= 6000 && hostCands.get(rec.c) === rec && beats(rec, cur, false)) { setHostRec(rec, retained); return; }
-    // Elutasított bejegyzés: ha mi vagyunk a host, a visszatartott helyre visszaírjuk a sajátunkat.
     if (isHost) reassertRetained();
   }
   function setHostRec(rec, retained) {
@@ -950,8 +878,6 @@
     if (qV) publish('q', queueMsg(), true);
     sendState();
   }
-  // A visszatartott üzeneteket (host, tiltólista, beállítás, állapot) a host újraküldi: új nézőnek, és ha valaki
-  // törölte vagy felülírta őket. Legfeljebb ~1 mp-enként, hogy egy elárasztás se pörgesse fel.
   function refreshRetained() {
     if (refreshTimer) return;
     refreshTimer = setTimeout(() => { refreshTimer = null; refreshNow(); }, 1200);
@@ -972,7 +898,6 @@
   }
 
   let outChain = Promise.resolve();
-  // onWire: az aláírt szöveg (a chatüzenetnél eltesszük, hogy az előzményekkel együtt aláírva adhassuk tovább).
   function publish(sub, obj, retain, onWire) {
     const c = client, key = roomKey;
     if (!c || !key) return outChain;
@@ -1006,15 +931,12 @@
     publish('p/' + sid, presenceOf(mv), true);
     if (!mv) prepLeave();
   }
-  // Az oldal elhagyásakor küldendő üzenetek előre titkosítva állnak készen (oldalváltásnál „Átvált…”,
-  // bezárásnál búcsú), így a lap utolsó pillanatában is azonnal, várakozás nélkül elmennek.
   let moveMsg = '';
   async function prepLeave() {
     const key = roomKey;
     if (!room || !key) return;
     try {
       const b = await seal(await signText(signedBody('m', { id: sid, k: 'bye', c: cid, n: shown(), ts: Date.now(), q: rand(8) })), 'm', key);
-      // a host oldalváltásánál hosszabb türelem (pl. a 18+ videók megerősítő ablaka is ennyit várhat)
       const mvp = await seal(await signText(signedBody('p/' + sid, presenceOf(isHost ? 60000 : 20000))), 'p/' + sid, key);
       if (key === roomKey) { byeMsg = b; moveMsg = mvp; byeAt = Date.now(); }
     } catch (e) {}
@@ -1024,7 +946,6 @@
     if (moveMsg && c && c.connected && Date.now() - byeAt < 8 * 60000) { try { c.publish(T('p/' + sid), moveMsg, { retain: true }); return; } catch (e) {} }
     announce(isHost ? 60000 : 20000);
   }
-  // Lap/böngésző bezárva: a többiek rögtön lássák, hogy kilépett (ne „Átvált…” legyen 20 mp-ig).
   function goneNow() {
     const c = client;
     if (!c || !c.connected) return;
@@ -1034,9 +955,6 @@
       else publish('m', { id: sid, k: 'bye', c: cid, n: shown(), ts: Date.now(), q: rand(8) });
     } catch (e) {}
   }
-  // Oldalváltás vagy bezárás? A Navigation API szól minden linkes, űrlapos, vissza/előre és scriptből indított
-  // oldalváltásról (a lap bezárásáról nem). Az újratöltést billentyűről is felismerjük; a böngésző
-  // újratöltés-gombja nem ad jelet, arra a fogadó oldal rövid türelmi ideje vigyáz.
   const markNav = () => { navIntent = Date.now(); };
   try {
     const navApi = window.navigation;
@@ -1187,8 +1105,6 @@
   }
 
   let inChain = Promise.resolve();
-  // Átmenet: ha a szobában valaki még a régi változatot használja, az a régi csatornán van, és nem látjuk egymást.
-  // A régi csatorna jelenléteit figyeljük, és egyszer szólunk.
   let oldNoted = false;
   async function onOldPresence(topic, buf, key) {
     if (oldNoted || !buf || !buf.length || buf.length > 16000) return;
@@ -1219,7 +1135,6 @@
     }).catch(() => {});
   }
 
-  // Valaki üresre törölte egy visszatartott üzenetünket: a saját jelenlétünket, hostként a szoba adatait visszaírjuk.
   let lastSelfFix = 0;
   function fixOwnPresence() {
     if (leaving || !client || !client.connected || Date.now() - lastSelfFix < 2000) return;
@@ -1235,7 +1150,6 @@
   const chatRate = new Map();
   function handleMessage(sub, m, retained, txt) {
     const s = m._s;
-    // Csak a saját nevében küldhet bárki (a host-bejegyzésben a „c” az új host, nem a küldő).
     if (sub !== 'host' && 'c' in m && m.c !== s) return;
     if (sub.startsWith('p/')) {
       const current = m.gone || Date.now() - m.at <= PRESENCE_TTL;
@@ -1255,7 +1169,6 @@
     else if (sub === 'm' && m.k === 'kick') onKick(m);
     else if (sub === 'm' && m.k === 'chat') {
       if (s === cid && !ownTabs.has(m.id)) return;
-      // Fogadó oldali korlát is (a küldőé 5 üzenet / 4 mp): egy módosított kliens se tudja elárasztani a chatet.
       const now = Date.now(), times = (chatRate.get(s) || []).filter(t => now - t < 4000);
       if (times.length >= 8) return;
       times.push(now); chatRate.set(s, times);
@@ -1312,18 +1225,13 @@
     showToast([icon('check-lg'), h('span', { text: ' Szinkronban vagy vele: ' + clean(m.n) })], 2600, '');
   }
 
-  const devSeen = new Map();  // eszközönként: mikor láttuk először ebben a szobában
+  const devSeen = new Map();
   let joinedAt = 0;
-  const presAt = new Map();   // lapnként a legfrissebb látott jelenlét ideje: a régebbiek visszajátszását eldobjuk
-  // signer: az aláíró eszköz. Egy lap jelenlétét csak az az eszköz írhatja felül vagy törölheti, amelyiké.
-  // goneVia: ha csak egy szerverről esett le a lap (annak a végakarata), és a jelenléte szerint másikon is ott van,
-  // akkor nem lépett ki – csak azt a szervert vesszük le róla.
-  // Verziók összevetése ("1.10" > "1.9"). Idegen adat: csak számokból és pontokból álló, rövid szöveget fogadunk el.
+  const presAt = new Map();
   const verParts = x => typeof x === 'string' && /^\d{1,4}(\.\d{1,4}){0,3}$/.test(x) ? x.split('.').map(Number) : null;
   const newerVer = (a, b) => { const p = verParts(a), q = verParts(b); if (!p || !q) return false;
     for (let i = 0; i < Math.max(p.length, q.length); i++) { const d = (p[i] || 0) - (q[i] || 0); if (d) return d > 0; } return false; };
   let updateOffered = false, availVer = '';
-  // elérhető újabb verzió: a panel alján a verzió-címke „Frissítés” gombbá válik, a kerek gombon jelzés
   function setAvail(v) {
     if (!newerVer(v, availVer || SCRIPT_VERSION)) return;
     availVer = v;
@@ -1332,13 +1240,11 @@
   function noteVersion(sv) {
     if (newerVer(sv, SCRIPT_VERSION)) setAvail(sv);
     if (updateOffered || !newerVer(sv, SCRIPT_VERSION)) return;
-    if (sess.get('tcwt_updoff') === sv) return;   // ebben a böngészőlapban már szóltunk erről a verzióról
+    if (sess.get('tcwt_updoff') === sv) return;
     updateOffered = true; sess.set('tcwt_updoff', sv);
     setTimeout(() => showToast([icon('arrow-right-circle'), h('span', { text: ' Új Trash2Gether: ' + sv + ' (neked ' + SCRIPT_VERSION + ' van) – ' }),
       h('a', { href: updLink(sv), target: '_blank', rel: 'noopener', text: 'Frissítés', style: 'color:inherit;font-weight:700;text-decoration:underline' })], 9000, 'upd'), 1500);
   }
-  // Más tagok verziója csak jelzés: a jelenlétet bárki módosíthatja, ezért ilyenkor mi magunk nézzük meg a kiadott
-  // verziót (legfeljebb 10 percenként), és csak azt fogadjuk el.
   let peerCheckAt = 0;
   function peerVersion(sv) {
     if (!newerVer(sv, availVer || SCRIPT_VERSION) || Date.now() - peerCheckAt < 10 * 60000) return;
@@ -1362,17 +1268,13 @@
       .catch(() => { if (done) done(null); });
   }
   setTimeout(checkUpdate, 4000);
-  setInterval(checkUpdate, 31 * 60000);   // hosszú nézés közben is (ugyanazon az oldalon)
-  // Aki végakarat nélkül tűnt el (összeomlott vagy elaludt a gép, vagy olyan szerveren volt, ami nem küldi el),
-  // ne maradjon örökre a listán: minden lap 5 percenként frissíti a jelenlétét, 16 perc csend után kilépettnek
-  // vesszük. A saját óránkkal mérünk (a másik gép órája eltérhet).
+  setInterval(checkUpdate, 31 * 60000);
   const STALE_MS = 16 * 60000;
   let staleTick = Date.now();
   setInterval(() => {
     const now = Date.now(), slept = now - staleTick > 3 * 60000;
     staleTick = now;
     if (!room) return;
-    // Ha mi aludtunk (pl. a gép alvó módban volt), nem ők hallgattak: újraindítjuk az órájukat.
     if (slept) { members.forEach(mm => { if (mm.rx) mm.rx = now; }); return; }
     [...members].forEach(([psid, mm]) => { if (mm.rx && now - mm.rx > STALE_MS) onPresence(psid, null, mm.c, null); });
   }, 60000);
@@ -1386,11 +1288,9 @@
       if (!old) return;
       if (goneVia != null && old.br) {
         old.br &= ~(1 << goneVia);
-        // Csak az számít, amelyik szerveren mi is fent vagyunk: ha a lapot csak olyanon látnánk, ami nekünk
-        // elérhetetlen (pl. nálunk le van tiltva), akkor nekünk már nincs itt.
         if (old.br & (client ? client.mask : 0)) return;
       }
-      presAt.set(psid, (old.at || 0) + 1);   // a lap utolsó jelenlétét se lehessen visszajátszani a kilépése után
+      presAt.set(psid, (old.at || 0) + 1);
     } else {
       if (typeof m.c !== 'string' || !m.c || m.at < (presAt.get(psid) || 0)) return;
       if (presAt.size > 500) presAt.clear();
@@ -1436,7 +1336,6 @@
     if (!acct) {
       const myJ = myJoin();
       const taken = new Set();
-      // Aki csak utánunk érkezett, az nem veheti el a nevünket (a korábbi belépési időt bárki állíthatja magáról).
       const late = c => (devSeen.get(c) || 0) > joinedAt + SETTLE_MS;
       members.forEach(m => {
         if (m.c === cid || late(m.c)) return;
@@ -1473,18 +1372,12 @@
     if (known) members.delete(m.id);
     dropGhost(c);
     if (!deviceOnline(c) && Date.now() - (kickedAt.get(c) || 0) >= 15000) {
-      // Kilépés gombbal: azonnal. Lap bezárásakor pár mp türelem: ha csak újratöltötte, csendben visszajön.
       if (m.x) sysMsg(nm + ' kilépett', 'pres:' + c);
       else leaveTimers.set(c, setTimeout(() => { leaveTimers.delete(c); if (!deviceOnline(c)) sysMsg(nm + ' kilépett', 'pres:' + c); }, 5000));
     }
     renderMembers();
   }
 
-  // A szoba videójának változását minden lap ugyanúgy észleli (host, nézők, háttérben lévő és mellék lapok is):
-  // amikor a szoba videója eltér attól, amit ez a lap utoljára ismert, egyszer kiírja. Belépéskor, újratöltéskor,
-  // visszaugráskor nincs váltás, ezért ott nem ír semmit.
-  // Csak az adott küldő legfrissebb állapota számít: a host új oldalán a régi oldal visszatartott (retained)
-  // állapota később érkezhet meg, mint amit az új oldal már elküldött – az nem videóváltás vissza.
   let roomVidC = '', roomVidAt = 0;
   function noteRoomVideoFrom(m, v) {
     if (m.c === roomVidC && m.at < roomVidAt) return;
@@ -1500,8 +1393,6 @@
     if (prev) sysMsg(VIDEO_MSG + (title || 'videó'), 'video', id, v);
   }
   const lastAt = new Map();
-  // Amíg nem tudjuk, ki a host (és a lapnak sincs elmentve), az állapotot félretesszük – így egy idegen
-  // visszatartott állapota nem viheti el az újonnan belépőt másik videóra.
   function flushStateWait() {
     const w = stateWait;
     stateWait = null;
@@ -1511,7 +1402,7 @@
     if (!okVer(m.at)) return;
     if (!hostRec && !hostConfirmed) { if (!stateWait || m.at >= stateWait.m.at) stateWait = { m, retained }; return; }
     if (typeof m.id === 'string') {
-      const k = m._s + '/' + m.id;   // küldőnként: más nem „fagyaszthatja be” a host állapotait egy jövőbeli idővel
+      const k = m._s + '/' + m.id;
       if (m.at <= (lastAt.get(k) || 0)) return;
       if (lastAt.size > 300) lastAt.clear();
       lastAt.set(k, m.at);
@@ -1571,29 +1462,22 @@
     if (m.lock === locked) return;
     locked = m.lock;
     sess.set('tcwt_lock_' + room, locked ? '1' : '0');
-    // a többieknek: ki állította be (a host neve, koronával)
     const who = hostRec && hostRec.n ? '👑 ' + cleanName(hostRec.n) + ' beállította: ' : '';
     if (stateSeen) sysMsg(who + (locked ? (who ? 'csak' : 'Csak') + ' a host kontrollál 🔒' : (who ? 'mindenki' : 'Mindenki') + ' kontrollálhat 🔓'), 'lock');
     renderMembers();
   }
-  // ---- Közös videósor (Lista) ----
-  // A listát csak a host írja (aláírt, megtartott üzenet, mint a Korlátozás), így az újonnan belépők is látják, és
-  // más nem írhatja át. Hozzáadni bárki tud: a kérés a host oldalához megy, az teszi a lista végére. A lejátszott
-  // videó a listán marad (csak a törlés veszi le), és ki van emelve; az automatikus továbblépés az utána következőt
-  // indítja, ha az épp menő nincs a listán, akkor a lista elsőjét.
   const Q_MAX = 30, QUEUE_SINCE = '1.4';
-  let queue = [], qV = 0, qId = '';   // qId: ki írta a lista ezen változatát (egyforma verziónál ez dönt, mindenkinél ugyanúgy)
+  let queue = [], qV = 0, qId = '';
   function qItem(x) {
     if (!x || typeof x !== 'object') return null;
     const id = typeof x.id === 'string' && /^\d{1,10}$/.test(x.id) ? x.id : null;
     if (!id) return null;
     const p = videoPath(x.p);
     const it = { id, p: p && vidId(p) === id ? p : '/video/' + id, t: clean(x.t || 'Videó', TITLE_MAX), d: okTime(x.d) ? Math.round(x.d) : 0, by: x.by ? cleanName(x.by) : '' };
-    if (okTime(x.s) && x.s >= 1 && x.s < 86400) it.s = Math.floor(x.s);   // innen induljon (időbélyeges link)
-    if (x.a18 === true || x.a18 === 1) it.a18 = 1;                          // 18+ (elmosott bélyegkép)
+    if (okTime(x.s) && x.s >= 1 && x.s < 86400) it.s = Math.floor(x.s);
+    if (x.a18 === true || x.a18 === 1) it.a18 = 1;
     return it;
   }
-  // Sorból indítás: időbélyeggel a lejátszó onnan kezd (a ?t= paramétert utána kivesszük a címből).
   function openQueued(it) {
     if (it.s) { sess.set('tcwt_tq', it.id); sess.set('tcwt_qs', JSON.stringify({ id: it.id, s: it.s })); }
     location.href = location.origin + it.p + (it.s ? '?t=' + it.s : '');
@@ -1608,8 +1492,6 @@
   }
   const queueMsg = () => ({ id: sid, c: cid, list: queue, v: qV, o: qId || sid });
   let qFixTimer = null;
-  // Korlátozáskor a nézők hozzáadása csak kérés: a host gépén gyűlik (a host minden lapja látja, a böngésző
-  // tárolójában), és a host egyenként jóváhagyja (✓) vagy elveti (✗).
   const QP_MAX = 10;
   let qPend = [];
   const pendKey = () => 'tcwt_qp_' + room;
@@ -1629,7 +1511,6 @@
     savePend();
     const added = yes && qAddLocal(p.it);
     if (added) sysMsg('➕ ' + p.n + ' hozzáadta: ' + p.it.t);
-    // a többieknek (és a kérőnek) is szólunk
     publish('m', { id: sid, c: cid, k: yes && added ? 'qacc' : 'qrej', n: p.n, to: p.c, t: p.it.t, ts: Date.now(), q: rand(8) });
   }
   function onQDecision(m, s) {
@@ -1638,15 +1519,13 @@
     if (m.k === 'qacc') sysMsg('➕ ' + cleanName(m.n) + ' hozzáadta: ' + t);
     if (m.to === cid) showToast([icon(m.k === 'qacc' ? 'check-lg' : 'x-lg'), h('span', { text: m.k === 'qacc' ? ' A host jóváhagyta: ' + cut(t, 40) : ' A host nem fogadta el: ' + cut(t, 40) })], 3000, '');
   }
-  // A listát a host eszközének bármelyik lapja szerkesztheti (ugyanaz az eszköz írja alá, a többiek elfogadják):
-  // így a gombok és a húzás akkor is megvannak, ha épp egy másik lapodon vagy a szobában.
   const canEditQ = () => !!room && (isHost || !!(hostConfirmed && hostRec && hostRec.c === cid));
   function publishQueue() {
     if (!canEditQ()) return;
     qV = nextVer(qV); qId = sid;
     saveQueue();
     publish('q', queueMsg(), true);
-    renderMembers();   // a lista és a fenti értesítés („Listán van”) is
+    renderMembers();
   }
   function onQueue(m) {
     if (!m || !Array.isArray(m.list) || m.list.length > Q_MAX || !okVer(m.v)) return;
@@ -1654,9 +1533,7 @@
     const oid = typeof m.o === 'string' ? m.o.slice(0, 20) : String(m.id || '').slice(0, 20);
     const list = m.list.map(qItem).filter(Boolean);
     if (m.v < qV || (m.v === qV && oid < qId)) {
-      if (JSON.stringify(list) === JSON.stringify(queue)) return;   // ugyanaz a tartalom: nincs teendő
-      // régebbi lista érkezett (pl. a host két lapja egyszerre írt, és a régebbi maradt meg a szerveren): ha
-      // nálunk újabb van és mi is írhatjuk, újra kiküldjük, hogy a később belépők is a frisset kapják
+      if (JSON.stringify(list) === JSON.stringify(queue)) return;
       if (canEditQ() && !qFixTimer) qFixTimer = setTimeout(() => { qFixTimer = null; if (canEditQ() && qV) publish('q', queueMsg(), true); }, 700);
       return;
     }
@@ -1672,7 +1549,6 @@
     return true;
   }
   function qRemove(id) { if (!canEditQ()) return; queue = queue.filter(x => x.id !== id); publishQueue(); }
-  // a host rendezi: fel/le gomb, vagy egérrel húzva tetszőleges helyre
   function qMove(id, to) {
     const i = queue.findIndex(x => x.id === id);
     if (!canEditQ() || i < 0) return;
@@ -1687,7 +1563,6 @@
   function qPlay(id) {
     const it = queue.find(x => x.id === id);
     if (!canEditQ() || !it) return;
-    // egy másik lapodról indítva ez a lap lesz a host lapja (különben csak ez a lap váltana, a szoba nem)
     if (!isHost) claimLead(true);
     markNav();
     openQueued(it);
@@ -1701,7 +1576,6 @@
     }
     const why = inQueue(it.id) ? 'Már a listán van' : queue.length >= Q_MAX ? 'Megtelt a lista' : '';
     if (why) { showToast([icon('exclamation-circle'), h('span', { text: ' ' + why })], 1600, ''); return false; }
-    // A videósor az 1.4-es változattól van: régebbi host nem látná a javaslatot.
     const hm = hostRec && [...members.values()].find(x => x.c === hostRec.c && !x.ghost);
     if (hm && newerVer(QUEUE_SINCE, hm.sv || '0')) {
       showToast([icon('exclamation-circle'), h('span', { text: ' A hostnál régebbi Trash2Gether fut, még nem kezeli a listát' })], 3000, '');
@@ -1720,9 +1594,8 @@
     if (sugRate.size > 200) sugRate.clear();
     const it = qItem(Object.assign({}, m.it, { by: m.n }));
     if (!it) return;
-    // csak az kerül a chatbe, amit a host tényleg felvehet (nincs már a listán, nem ez megy épp, van hely)
     if (inQueue(it.id) || queue.length >= Q_MAX) return;
-    if (locked) {   // korlátozva: kérés a hostnak, jóváhagyásig a chatbe sem kerül
+    if (locked) {
       if (isHost) {
         loadPend();
         if (qPend.some(x => x.it.id === it.id) || qPend.length >= QP_MAX) return;
@@ -1735,7 +1608,6 @@
     sysMsg('➕ ' + cleanName(m.n) + ' hozzáadta: ' + it.t);
     if (isHost) qAddLocal(it);
   }
-  // a lista következő eleme az épp menő (a szoba videója) után
   function qNext() {
     const cur = vidId(roomV || VPATH), i = cur ? queue.findIndex(x => x.id === cur) : -1;
     return i >= 0 ? queue[i + 1] || null : queue.find(x => x.id !== cur) || null;
@@ -1795,11 +1667,9 @@
     try { const b = v.buffered, t = v.currentTime; if (!b || typeof b.length !== 'number' || (!b.length && v.readyState >= 3)) return Infinity; for (let i = 0; i < b.length; i++) if (b.start(i) <= t + 0.05 && b.end(i) >= t) return b.end(i) - t; } catch (e) {}
     return 0;
   }
-  // Be van-e már töltve a videó a t-től kezdődő rövid szakaszon (oda tekerni azonnali, nem kell újra várni).
   function buffered(v, t, ahead) {
     try {
       const b = v.buffered;
-      // ha a böngésző nem ad adatot (lejátszható állapotban üres lista), ne tartsuk vissza a tekerést
       if (!b || typeof b.length !== 'number' || (!b.length && v.readyState >= 3)) return true;
       for (let i = 0; i < b.length; i++) if (b.start(i) <= t + 0.05 && (b.end(i) >= t + ahead || (v.duration && b.end(i) >= v.duration - 0.3))) return true;
     } catch (e) {}
@@ -1811,7 +1681,6 @@
     if (!nudging) setRate(v, rate);
   }
   let seekT0 = 0, seekLat = 0, precise = true;
-  // Be nem töltött helyre tekerés: bufLat = a tekeréstől az induló lejátszásig mért idő (ennyivel célzunk előrébb).
   const CATCHUP_MAX = 6;
   let blindT0 = 0, bufLat = 0;
   setTimeout(() => { precise = false; }, 20000);
@@ -1868,19 +1737,13 @@
       if (Math.abs(t - v.currentTime) > 0.05) seekTo(v, t);
     } else {
       const drift = t - v.currentTime;
-      if (!v.paused && !v.seeking && v.readyState < 3) { /* buffering: catch up once it plays again */ }
-      // Egy korábbi tekerés még tölt: újabb tekerés újrakezdené a töltést, és lassú netnél a videó sosem indulna el
-      // (a host 4 mp-enkénti jelzése mindig újra tekerne). Csak ha nagyon beragadt (20 mp), próbáljuk újra.
-      else if (v.seeking && !(seekT0 && performance.now() - seekT0 > 20000)) { /* várunk */ }
+      if (!v.paused && !v.seeking && v.readyState < 3) { }
+      else if (v.seeking && !(seekT0 && performance.now() - seekT0 > 20000)) { }
       else if (Math.abs(drift) > (precise ? PRECISE_DRIFT : HARD_DRIFT)) {
-        // Betöltött helyre azonnal tekerünk. Ha a cél még nincs betöltve, kis eltérést gyorsabb/lassabb
-        // lejátszással hozunk be (a videó közben megy tovább); nagyobbnál előre tekerünk, a mért töltési idővel
-        // előrébb célozva, hogy mire elindul, ne legyen megint lemaradva.
         const dur = v.duration ? Math.max(0, v.duration - 0.25) : Infinity;
         const target = Math.min(t + (seekLat || 0.3) * rate, dur);
         if (blindT0 && v.seeking) bufLat = Math.max(bufLat, (performance.now() - blindT0) / 1000);
         if (buffered(v, target, 1.5)) { resetRate(); seekTo(v, target); }
-        // erős (1,25x) gyorsítás csak elég előretöltött anyaggal, különben ez fogyasztaná el a puffert, és megint akadna
         else if (Math.abs(drift) <= CATCHUP_MAX && !precise) nudge(v, drift, drift < 0 || aheadOf(v) >= 4);
         else {
           resetRate(); blindT0 = performance.now();
@@ -1894,8 +1757,6 @@
     if (!retained && !m.b && typeof m.a === 'string') showAction(m);
   }
 
-  // A Trash City némítás gombja a saját „muted” osztályából dolgozik, nem a videó állapotából. Ha a script némít
-  // vagy visszahangosít, ezt is átállítjuk, különben az oldal hangszóró gombja az első kattintásra nem csinál semmit.
   function setMuted(v, on) {
     v.muted = on;
     const mb = document.querySelector('.video-container .mute-btn');
@@ -1932,9 +1793,6 @@
   let pendingAct = null, lastTime = 0, seekFrom = null, autoTimer = null, scrubPaused = false;
   const PAGE_T0 = Date.now();
   const userClick = () => { const ua = navigator.userActivation; return !ua || typeof ua.isActive !== 'boolean' || ua.isActive; };
-  // Egy eszközön csak a vezető lap játszhatja a szoba videóját. A többi (pl. a videóváltáskor a háttérben
-  // utánajött régi lap) álljon: az oldal automatikus lejátszása akár a script betöltődése előtt elindíthatja,
-  // és akkor szinkron nélkül szólna tovább, a szünetet sem követné.
   function holdFollower() {
     const v = hooked;
     if (!room || !v || v.paused || navigating || isLead()) return;
@@ -1960,8 +1818,6 @@
       if (v.currentTime < v.duration - 2.5) return;
       const wasEnded = v.ended;
       seekTo(v, 0);
-      // Az oldal automatikusan elindította volna, de a vége miatt rögtön megállt: indítsuk az elejéről
-      // (szobában a nézőknél a szinkron dönt).
       if (wasEnded && (!room || isHost)) playSafe(v);
     };
     if (v.readyState >= 1) check(); else v.addEventListener('loadedmetadata', () => setTimeout(check, 0), { once: true });
@@ -1974,8 +1830,6 @@
     addMenuItem();
     fixEndResume(v);
     v.addEventListener('timeupdate', () => { if (!v.seeking) lastTime = v.currentTime; });
-    // Az oldal a metaadatok betöltésekor magától a mentett helyre teker (hosszú videóknál). Lassú netnél ez jóval
-    // az oldal betöltése után történik – ne higgyük kézi tekerésnek, és ne küldjük el a szobának.
     let metaAt = -1e9, siteSeek = false;
     v.addEventListener('loadedmetadata', () => { metaAt = performance.now(); });
     v.addEventListener('seeking', () => {
@@ -1991,10 +1845,7 @@
       if ((ev === 'play' && consume('play')) || (ev === 'pause' && consume('pause'))) return;
       if (!room) { if (ev === 'seeked') { seekFrom = null; lastTime = v.currentTime; } return; }
       const onRoomVideo = !!(VPATH && roomV && sameVideo(VPATH, roomV));
-      // A videó magától ért véget egy nézőnél: ez nem megállítás. Ha elküldené, a pár tizeddel lemaradó
-      // hostot a vége előtt megállítaná, így nála sosem érne véget a videó (és az automatikus lejátszás sem indulna).
       if (ev === 'pause' && v.ended && !isHost) { seekFrom = null; lastTime = v.currentTime; return; }
-      // Ugyanez az oldal „ismétlés” menüpontjával: ha egy nézőnél a végéről az elejére ugrik a videó, az nem tekerés.
       if (ev === 'seeked' && !isHost && v.loop && seekFrom != null && v.duration && seekFrom > v.duration - 1.5 && v.currentTime < 1) {
         seekFrom = null; lastTime = v.currentTime;
         if (lastState && onRoomVideo && isLead()) apply({ t: expectedPos(), p: lastState.p, r: lastState.r, b: 1, local: 1 }, false);
@@ -2023,7 +1874,6 @@
       lastLocal = Date.now();
       if (!isLead()) {
         seekFrom = null; lastTime = v.currentTime;
-        // Csak valódi kattintásra/billentyűre veszi át a nézést; magától induló lejátszás itt nem játszhat.
         if (ev === 'play' && onRoomVideo) { if (userClick()) takeOver(true); else { expectEv('pause'); v.pause(); } }
         else if (ev === 'play' && VPATH && hostDevice() && !askDismissed) { askEl.hidden = false; updateStatus(); togglePanel(true); }
         return;
@@ -2061,7 +1911,6 @@
       else if (!isHost && room) setTimeout(localSync, 300);
     });
     v.addEventListener('pause', () => { clearTimeout(stallTimer); if (stalled) { stalled = false; } });
-    // Ha a némítva indult videót az oldal saját hangszóró gombjával hangosítod vissza, a „Hang be” gomb is eltűnik.
     v.addEventListener('volumechange', () => {
       if (!v.muted && tapMode === 'unmute' && tapBtn.style.display !== 'none') { tapBtn.style.display = 'none'; setActivity(''); }
     });
@@ -2070,8 +1919,6 @@
       const wasNudging = nudging;
       clearTimeout(rateTimer); nudging = false;
       if (room && !isHost && locked) { if (lastState) setRate(v, baseRate); return; }
-      // A Trash City sebességgombja az éppen aktuális sebességhez ad 0,25-öt. Ha közben a script finoman
-      // gyorsított/lassított a szinkronhoz (pl. 1,07x), abból 1,32x lenne: ilyenkor a valódi alapból számolunk.
       if (wasNudging) { baseRate = baseRate + 0.25 > 2 ? 0.25 : baseRate + 0.25; setRate(v, baseRate); }
       else baseRate = v.playbackRate;
       if (!room) return;
@@ -2085,9 +1932,6 @@
     if (room && hooked && hooked.preload !== 'auto') { try { hooked.preload = 'auto'; } catch (e) {} }
     localSync();
   }, 1000);
-  // A böngésző Vissza/Előre gombjánál a régi oldal a memóriából (bfcache) is visszajöhet, a régi állapotával:
-  // közben mások kiléphettek, a chat és a host változhatott, vagy épp egy későbbi oldalon kiléptél / másik
-  // szobába mentél. Ezért úgy kezeljük, mint egy friss betöltést: a böngészőlap mostani adataiból indulunk újra.
   addEventListener('pageshow', e => {
     if (!e.persisted) return;
     navigating = false; leaving = false;
@@ -2095,7 +1939,6 @@
     if (cur) { connect(cur); renderMembers(); return; }
     if (room) dropRoomLocal();
   });
-  // Csak ennél a lapnál zárja le a szobát, üzenet nélkül (a kilépést egy másik oldal már elküldte).
   function dropRoomLocal() {
     if (client) { const c = client; client = null; try { c.end(true); } catch (e) {} }
     resetRoomState();
@@ -2111,7 +1954,6 @@
     if (isHost && room && v && !v.paused) sendState(true);
   }, BEAT_MS);
 
-  // A szoba lejátszási pozíciója akkor is, ha épp másik oldalon vagyunk: ebből lesz a ?t= érték.
   let roomClock = null;
   function noteRoomClock(m, v, retained) {
     if (!v || !okTime(m.t)) return;
@@ -2125,10 +1967,8 @@
     if (!c || !sameVideo(c.v, v)) return null;
     if (!c.run) return c.t;
     const age = (Date.now() - c.rx) / 1000;
-    return age < 60 ? c.t + (age + 1) * c.r : null; // +1 mp: nagyjából ennyi, mire az új oldalon elindul a videó
+    return age < 60 ? c.t + (age + 1) * c.r : null;
   }
-  // Minden videóváltás (a host követése is) új bejegyzés az előzményekben, így a böngésző Vissza/Előre
-  // gombjával (és az egér oldalgombjaival) lapozni lehet a korábbi videók között.
   function openVideo(p) {
     const t = roomTime(p);
     if (okTime(t)) sess.set('tcwt_tq', vidId(p));
@@ -2147,13 +1987,10 @@
   function unlock() {
     hook();
     const v = getVideo();
-    // Véget ért videón a play() az elejére ugrana (böngészőszabály) – ott kihagyjuk, a kattintás amúgy is
-    // engedélyezi a későbbi lejátszást.
     if (!v || !v.paused || v.ended || v !== hooked) return;
     expectEv('play');
     const t0 = performance.now();
     const p = v.play();
-    // Lassú netnél a play() csak sokára teljesül – addigra a szoba szerint már mehet a videó, ilyenkor nem állítjuk le.
     if (p?.then) p.then(() => {
       if (performance.now() - t0 > 1500 || (room && lastState && lastState.p) || v.paused) return;
       expectEv('pause'); v.pause();
@@ -2172,11 +2009,6 @@
   const CODE_LEN = 8;
   const codeChars = s => String(s || '').toLowerCase().split('').filter(ch => CODE_ABC.includes(ch)).join('');
   const validCode = c => typeof c === 'string' && c.length === CODE_LEN && codeChars(c) === c;
-  // Szoba keresése belépés előtt: létezik-e, és nem vagy-e kitiltva belőle (így nem lépsz be előbb, hogy aztán
-  // kidobjon). A szerver a feliratkozás visszaigazolása után rögtön küldi a szoba elmentett adatait; ha addig
-  // nem jön semmi, a szoba nem létezik. A várakozást a mért válaszidőhöz igazítjuk (gyors netnél fél mp).
-  // Eredmény: true / false (nincs ilyen) / 'banned' / 'old' (csak a régi, aláírás nélküli változat csatornáján
-  // létezik – azt a mostani nem látja) / null (nincs kapcsolat). A régi csatornát ugyanazon a kapcsolaton nézzük.
   function roomExists(code) {
     return new Promise(resolve => {
       let done = false, c = null, keys = null, online = false, grace = null, settle = null, found = false, foundOld = false;
@@ -2187,8 +2019,6 @@
         if (v === false || v === 'old') { store.del('tcwt_k_' + code); keyJobs.delete(code); }
         resolve(v);
       };
-      // Kitiltásnak csak akkor hiszünk, ha a lista a szoba hostjától jön, és a jelenlévők nagy része is őt tartja
-      // hostnak – egy idegen így nem tarthat távol senkit (pl. fióknév alapján) egy hamis listával.
       let hostC = null, banMsg = null;
       const votesP = new Map();
       const verdict = () => {
@@ -2232,7 +2062,6 @@
         c = brokerSet(() => ({ clientId: 'tcwt_q' + rand(10), keepalive: 30, connectTimeout: 7000, clean: true }), false);
       } catch (e) { finish(null); return; }
       c.on('connect', () => { online = true; probe(); });
-      // Csak akkor hiba, ha egyik szerver sem érhető el (az egyiket tilthatja egy szűrő).
       c.on('close', () => { if (!online && c.failed) finish(null); });
       deriveRoom(code).then(k => { keys = k; probe(); }, () => finish(null));
     });
@@ -2299,8 +2128,6 @@
     if (!isHost && isLead()) { precise = true; requestSync(); setTimeout(localSync, 400); }
   });
 
-  // Saját családnév: az oldal YouTube Sans CSS-e mind a 7 vágást 500-as vastagsággal adja meg,
-  // így ott a félkövér felirat rossz vágással, műfélkövérként jelenne meg (és 7 fájl töltődne le 1 helyett).
   if (!document.getElementById('tcwt-fonts')) {
     const st = document.createElement('style');
     st.id = 'tcwt-fonts';
@@ -2711,7 +2538,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
 
   // Bootstrap Icons 1.13.2 (MIT) – beépítve, így nem kell külön ikonbetűtípust letölteni.
   const ICONS = {
-    // az oldal saját ikonjai (Font Awesome „eye”, Material Icons „thumb_up_alt” / „thumb_down_alt”) – [viewBox, rajz]
     'site-eye': ['0 0 576 512', '<path d="M572.52 241.4C518.29 135.59 410.93 64 288 64S57.68 135.64 3.48 241.41a32.35 32.35 0 0 0 0 29.19C57.71 376.41 165.07 448 288 448s230.32-71.64 284.52-177.41a32.35 32.35 0 0 0 0-29.19zM288 400a144 144 0 1 1 144-144 143.93 143.93 0 0 1-144 144zm0-240a95.31 95.31 0 0 0-25.31 3.79 47.85 47.85 0 0 1-66.9 66.9A95.78 95.78 0 1 0 288 160z"/>'],
     'site-up': ['0 0 24 24', '<path d="M2 20h2c.55 0 1-.45 1-1v-9c0-.55-.45-1-1-1H2v11zm19.83-7.12c.11-.25.17-.52.17-.8V11c0-1.1-.9-2-2-2h-5.5l.92-4.65c.05-.22.02-.46-.08-.66-.23-.45-.52-.86-.88-1.22L14 2 7.59 8.41C7.21 8.79 7 9.3 7 9.83v7.84C7 18.95 8.05 20 9.34 20h8.11c.7 0 1.36-.37 1.72-.97l2.66-6.15z"/>'],
     'site-down': ['0 0 24 24', '<path d="M22 4h-2c-.55 0-1 .45-1 1v9c0 .55.45 1 1 1h2V4zM2.17 11.12c-.11.25-.17.52-.17.8V13c0 1.1.9 2 2 2h5.5l-.92 4.65c-.05.22-.02.46.08.66.23.45.52.86.88 1.22L10 22l6.41-6.41c.38-.38.59-.89.59-1.42V6.34C17 5.05 15.95 4 14.66 4h-8.1c-.71 0-1.36.37-1.72.97l-2.67 6.15z"/>'],
@@ -2814,13 +2640,11 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     expectEv('play');
     v.play().then(() => { setActivity(''); requestSync(); }, () => {});
   } });
-  // Általános állapot (host vagy, korlátozás) és a szoba videója külön: az utóbbi saját kártyán, bélyegképpel.
   const hostTxt = h('div');
   const thumbEl = h('img', { class: 'vthumb', alt: '', decoding: 'async', referrerpolicy: 'same-origin' });
   let thumbBad = '';
   thumbEl.addEventListener('error', () => { thumbBad = thumbEl.getAttribute('src'); thumbEl.style.display = 'none'; });
   const vcapEl = h('div', { class: 'vcap' }), vtitleEl = h('div', { class: 'vtitle' });
-  // a szoba videójára (vissza): a kártyára kattintva; ha ugyanez a videó van itt, ez a lap veszi át
   function jumpBack() {
     const p = videoPath(roomV);
     if (!p) return;
@@ -2836,8 +2660,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   const lockBtn = btn('btn sec', 'lock', 'Korlátozás', { onclick: () => setLock(!locked) });
   const lockNote = h('div', { class: 'locknote' });
   const hostInfo = h('div', { class: 'hinfo' }, hostTxt, lockNote);
-  // Értesítés a panel tetején, ha ezen a lapon nem a szoba videója van (vagy egy másik lapodon nézed):
-  // Ezt nézzük (a szoba is ezt nézze) – Listához adás (a lista végére) – Bezárás (itt nézed, a másik lap megáll).
   const showBtn = btn('btn', 'broadcast', 'Ezt nézzük', { title: 'A szoba is ezt a videót nézze', onclick: showToRoom });
   const noticeAdd = btn('btn sec', 'plus-lg', 'Listához adás', { title: 'Ez a videó a lista végére', onclick: () => {
     const id = vidId(VPATH);
@@ -2851,7 +2673,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     noticeOff = noticeKey();
     sess.set('tcwt_noticeoff', noticeOff);
     askEl.hidden = true; askDismissed = true;
-    // ez a lap lesz a szobában az aktív: a másik lapodon (ha ott ment) megáll a videó
     if (room) claimLead(false);
     const v = getVideo();
     if (v && v.paused && !v.ended) { expectEv('play'); v.play().catch(() => {}); }
@@ -2916,13 +2737,10 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       btn('btn', 'broadcast', 'Igen', { onclick: showToRoom }),
       btn('btn sec', 'person', 'Csak én nézem', { onclick: () => { askEl.hidden = true; askDismissed = true; updateStatus(); } })));
   const statusEl = h('div', { class: 'status', hidden: 'hidden' }, askEl, tapBtn, activityEl);
-  // ---- Lista (közös videósor) felülete ----
   const qCount = h('span', { text: 'Lista' });
   const qSearchIn = h('input', { class: 'field qin', type: 'search', placeholder: 'Keress, vagy illessz be linket', autocomplete: 'off', maxlength: '1500', enterkeyhint: 'search', 'aria-label': 'Keresés vagy videólink' });
   const qSearchBtn = btn('btn sec qbtn', 'search', '', { type: 'button', 'aria-label': 'Keresés', title: 'Keresés', onclick: () => runSearch() });
   qSearchIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } });
-  // bemásolt linknél nem kell Entert nyomni
-  // ha kitörlik a keresett szöveget (vagy a mező saját ×-ével ürítik), a találatok is eltűnnek
   qSearchIn.addEventListener('input', () => { if (!qSearchIn.value.trim()) { searchSeq++; qResults.hidden = true; qResults.replaceChildren(); } });
   qSearchIn.addEventListener('paste', () => setTimeout(() => { if (parseLink(qSearchIn.value.trim())) runSearch(); }, 0));
   const qResults = h('div', { class: 'qres', hidden: 'hidden' });
@@ -2933,7 +2751,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   } });
   const qList = h('div', { class: 'qlist' });
   const parseDur = s => { const m = /(?:(\d+):)?(\d{1,2}):(\d{2})/.exec(s || ''); return m ? (+(m[1] || 0)) * 3600 + (+m[2]) * 60 + (+m[3]) : 0; };
-  // Az oldal saját keresője (/search/videos/<szöveg>): a találati kártyákból cím, hossz és azonosító.
   function parseSearch(html) {
     const d = new DOMParser().parseFromString(html, 'text/html');
     const out = [], got = new Set();
@@ -2950,8 +2767,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     return out;
   }
   let searchSeq = 0;
-  // Bemásolt videólink (akár a „Video Link másolása a jelenlegi időtől” menüpontból, …?t=123 végű): az lesz a
-  // találat. Az időbélyeget is elfogadjuk perc:mp vagy 1h2m3s alakban.
   function parseLink(q) {
     const m = /^(?:https?:\/\/)?(?:www\.)?trashcity\.net(\/video\/\d+[^\s#?]*)([^\s]*)$/i.exec(q) || /^(\/video\/\d+[^\s#?]*)([^\s]*)$/.exec(q);
     if (!m) return null;
@@ -2971,7 +2786,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   }
   async function linkResult(l) {
     try {
-      // előbb süti nélkül (így látszik a 18+ jelzés), ha úgy nem elérhető, bejelentkezve
       let d = null, t = '';
       for (const cred of ['omit', 'same-origin']) {
         const r = await fetch(location.origin + '/video/' + l.id, { credentials: cred });
@@ -3012,9 +2826,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (!items) { qResults.replaceChildren(h('div', { class: 'muted qnote', text: 'A keresés nem sikerült.' })); return; }
     qResults.replaceChildren(...(items.length ? items.map(it => qRow(it, 'res')) : [h('div', { class: 'muted qnote', text: 'Nincs találat.' })]));
   }
-  // Egy videó a találatok vagy a lista között. Találatnál a sorra kattintva (vagy Enterrel) kerül a listára; a
-  // megnyitás külön gomb (új lapon), hogy egy elkattintás ne vigye el az oldalt.
-  // 18+ videó: az oldal minden listájában elmosott a bélyegkép – nálunk is
   const isA18 = (id, it) => !!((it && it.a18) || (vinfo[id] && vinfo[id].a18));
   function qRow(it, mode, idx) {
     const img = h('img', { class: 'qthumb' + (isA18(it.id, it) ? ' a18' : ''), alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'same-origin', src: location.origin + '/media/videos/tmb/' + it.id + '/default.jpg' });
@@ -3047,7 +2858,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const now = !!roomV && vidId(roomV) === it.id, edit = canEditQ();
     if (edit) {
       const play = btn('qb', 'play-fill', '', { type: 'button', title: 'Lejátszás most', 'aria-label': 'Lejátszás most', onclick: () => qPlay(it.id) });
-      if (now) play.style.visibility = 'hidden';   // ez megy épp
+      if (now) play.style.visibility = 'hidden';
       acts.append(play);
       const up = btn('qb', 'arrow-up', '', { type: 'button', title: 'Feljebb', 'aria-label': 'Feljebb', onclick: () => qUp(it.id) });
       const down = btn('qb', 'arrow-down', '', { type: 'button', title: 'Lejjebb', 'aria-label': 'Lejjebb', onclick: () => qDown(it.id) });
@@ -3061,11 +2872,10 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (edit) row.addEventListener('pointerdown', e => qDragStart(e, row, it.id));
     return row;
   }
-  // Húzás egérrel (tollal): a sort megfogva a többi közé ejthető; a vonal mutatja, hova kerül.
   let qDrag = null, qDragAt = 0;
   function qDragStart(e, row, id) {
     if (e.button !== 0 || e.pointerType === 'touch' || e.target.closest('.qb')) return;
-    qDrag = null;   // egy esetleg beragadt előző húzás
+    qDrag = null;
     const y0 = e.clientY;
     let on = false, to = -1, mark = null;
     const rows = () => [...qList.querySelectorAll('.qrow')];
@@ -3080,22 +2890,19 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       clear();
       let t = rs.length - 1;
       for (let i = 0; i < rs.length; i++) { const b = rs[i].getBoundingClientRect(); if (ev.clientY < b.top + b.height / 2) { t = i; break; } }
-      // a vonal a célhely fölött (vagy az utolsó alatt) – a saját helyén nem rajzolunk
       const below = ev.clientY >= rs[rs.length - 1].getBoundingClientRect().top + rs[rs.length - 1].getBoundingClientRect().height / 2;
       to = below ? rs.length - 1 : (t > from ? t - 1 : t);
       if (to !== from) { mark = below ? rs[rs.length - 1] : rs[t]; mark.classList.add(below ? 'dropa' : 'dropb'); }
-      // a panel görgetése a szélek közelében
       const sc = liveEl, b = sc.getBoundingClientRect();
       if (ev.clientY < b.top + 30) sc.scrollTop -= 12; else if (ev.clientY > b.bottom - 30) sc.scrollTop += 12;
     };
-    // az egész ablakot figyeljük: gyors mozdulatnál az egér azonnal a megfogott soron kívül van
     const end = () => {
       window.removeEventListener('pointermove', move, true); window.removeEventListener('pointerup', end, true);
       window.removeEventListener('pointercancel', end, true); window.removeEventListener('blur', end);
       if (!on) return;
       row.classList.remove('dragging'); clear(); qDrag = null;
       if (to >= 0) qMove(id, to);
-      renderQueue();   // ha közben változott a lista (vagy nem mozdult), most rajzoljuk újra
+      renderQueue();
     };
     window.addEventListener('pointermove', move, true); window.addEventListener('pointerup', end, true);
     window.addEventListener('pointercancel', end, true); window.addEventListener('blur', end);
@@ -3105,22 +2912,18 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const pend = canEditQ() ? qPend : [];
     const cnt = (queue.length ? 'Lista (' + queue.length + ')' : 'Lista') + (pend.length ? ' · ' + pend.length + ' kérés' : '');
     if (qCount.textContent !== cnt) qCount.textContent = cnt;
-    // a nézők listájával együtt sokszor hívódik: csak akkor rajzoljuk újra, ha a lista (vagy az adatai) változtak,
-    // különben újraindulnának a futószalagok, és a képek is újratöltődnének
     const curId = vidId(roomV || '');
-    if (qDrag && Date.now() - qDragAt > 60000) qDrag = null;   // biztonsági fék: beragadt húzás
+    if (qDrag && Date.now() - qDragAt > 60000) qDrag = null;
     const sig = JSON.stringify([canEditQ(), curId, queue, queue.map(x => vinfo[x.id] ? [vinfo[x.id].at, vinfo[x.id].a18] : 0), pend.map(p => [p.it.id, p.n])]);
     if ((sig !== qSig || !qList.firstChild) && !qDrag) {
       qSig = sig;
       qList.replaceChildren(...(queue.length ? queue.map((it, i) => qRow(it, 'q', i)) : [h('div', { class: 'muted qnote', text: 'A lista üres' })]),
-        // a függő kérések csak a hostnak, a lista végén (ide kerülnének)
         ...pend.map(p => h('div', { class: 'qpend' }, h('div', { class: 'qpcap', text: p.n + ' hozzá szeretné adni:' }), qRow(p.it, 'pend'))));
     }
     const here = vidId(VPATH);
     qHereBtn.style.display = room && here && !inQueue(here) ? '' : 'none';
     qHereBtn.querySelector('span').textContent = 'Videó hozzáadása a listához';
   }
-  // külön összecsukható rész a lista és a keresés
   const queueSec = section('queue', qCount, qList);
   const searchSec = section('search', h('span', { text: 'Keresés' }), h('div', { class: 'qsearch' }, qSearchIn, qSearchBtn), qResults, qHereBtn);
 
@@ -3148,7 +2951,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   const epanel = h('div', { class: 'epanel' },
     h('div', { class: 'ehead' }, h('span', { text: 'Smiley-k' }),
       btn('x', 'x-lg', '', { 'aria-label': 'Smiley-k bezárása', onclick: () => toggleEmoji(false) })),
-    // loading=lazy: a rejtett választó ne töltse le minden oldalbetöltéskor mind a ~70 képet, csak ha kinyitják.
     h('div', { class: 'egrid' }, SMILEYS.map(f => {
       const img = smileyImg(f); img.loading = 'lazy';
       return h('button', { class: 'emo', title: smileyName(f), 'aria-label': smileyName(f), onmousedown: e => e.preventDefault(), onclick: () => insertSmiley(f) }, img);
@@ -3173,8 +2975,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     floatBtn.setAttribute('aria-label', floatBtn.title);
     if (!on) floatLayer.querySelectorAll('.float').forEach(e => e.remove());
   }
-  // ---- Állapot (note): rövid szöveg a neved alatt a Nézők listájában; minden szobában látszik, amíg át nem írod
-  // vagy ki nem törlöd. Beírni egy kis ablakban lehet, smiley-t csak az oldal saját készletéből (a billentyűzetről).
   let myNote = cleanNote(store.get('tcwt_note') || '');
   const noteParts = t => String(t || '').split(TOKEN).map((p, i) => i % 2 ? (SMILEY_SET.has(p) ? smileyImg(p) : '') : p).filter(x => x !== '');
   const noteBtn = btn('x', 'note', '', { onclick: e => { e.stopPropagation(); toggleNote(); } });
@@ -3196,7 +2996,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   function buildNotePop() {
     const field = h('div', { class: 'nfield', contenteditable: 'true', role: 'textbox', 'aria-label': 'Állapot', 'data-ph': 'Adj meg egy státuszt', spellcheck: 'false' });
     const count = h('span', { class: 'ncount' });
-    // hibaüzenet csak akkor, ha tényleg kiszűrtünk valamit (vagy betelt a smiley-keret); pár mp múlva eltűnik
     const hint = h('div', { class: 'nerr', role: 'alert', hidden: 'hidden' });
     let hintT = null;
     const showErr = msg => { hint.textContent = msg; hint.hidden = false; clearTimeout(hintT); hintT = setTimeout(() => { hint.hidden = true; }, 3500); };
@@ -3209,14 +3008,11 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       const cur = read(), sm = (cur.match(TOKEN) || []).length, tl = cur.replace(TOKEN, '').length;
       count.textContent = tl + '/' + NOTE_TEXT_MAX + ' · ' + sm + '/' + NOTE_SMILEY_MAX + ' smiley';
     };
-    // minden változás után: ha nem engedett dolog került bele (emoji, kód, másolt formázás), kitisztítjuk
     const tidy = () => {
       const cur = read(), core = cur.replace(/ {2,}/g, ' ').replace(/^ +| +$/g, ''), ok = cleanNote(core);
-      // a Firefox kiürítéskor egy üres <br>-t (vagy üres elemet) hagy a mezőben: az nem hiba, csak eltakarítjuk
       const junk = n => n.nodeType === 1 && n.nodeName !== 'IMG' && !n.textContent && !n.querySelector('img');
       if ([...field.childNodes].some(junk)) { [...field.childNodes].filter(junk).forEach(n => n.remove()); }
       const bad = [...field.childNodes].some(n => n.nodeType !== 3 && !(n.nodeName === 'IMG' && SMILEY_SET.has(n.dataset.s)));
-      // a kiszűrt karakterek előtti szóköz maradjon meg (pl. „szia 😀” → „szia ”, és lehet folytatni)
       const kept = Array.from(cur).filter(ch => NOTE_CHAR.test(ch) || ch === '[' || ch === ']').join('');
       if (ok !== core || bad) {
         const invalid = bad || Array.from(core.replace(TOKEN, '')).some(ch => !NOTE_CHAR.test(ch));
@@ -3231,7 +3027,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     field.addEventListener('keydown', e => {
       if (e.key === 'Enter') { e.preventDefault(); commit(); }
       else if (e.key === 'Escape') { e.preventDefault(); toggleNote(false); }
-      e.stopPropagation();   // az oldal billentyűi (szóköz, nyilak, f, m…) ne fussanak le gépelés közben
+      e.stopPropagation();
     });
     field.addEventListener('keyup', e => e.stopPropagation());
     field.addEventListener('keypress', e => e.stopPropagation());
@@ -3244,7 +3040,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     field.addEventListener('drop', e => e.preventDefault());
     const kb = h('div', { class: 'nkeys', role: 'group', 'aria-label': 'Smiley-k' }, ...SMILEYS.map(f => {
       const b = h('button', { type: 'button', class: 'nkey', title: smileyName(f) }, smileyImg(f));
-      b.addEventListener('mousedown', e => e.preventDefault());   // a mező maradjon fókuszban, a kurzor a helyén
+      b.addEventListener('mousedown', e => e.preventDefault());
       b.addEventListener('click', () => {
         if ((read().match(TOKEN) || []).length >= NOTE_SMILEY_MAX) { showErr('Legfeljebb ' + NOTE_SMILEY_MAX + ' smiley lehet.'); return; }
         const im = smileyImg(f); im.dataset.s = f;
@@ -3278,11 +3074,9 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     pop.addEventListener('pointerdown', e => e.stopPropagation());
     return pop;
   }
-  // kattintás a panelen máshol: bezárjuk
   shadow.addEventListener('pointerdown', e => { if (notePop && notePop.isConnected && !e.composedPath().includes(notePop) && !e.composedPath().includes(noteBtn)) toggleNote(false); });
   const headEl = h('header', { title: 'Húzd a mozgatáshoz · dupla katt: alaphelyzet' },
     logoEl, connChip, h('div', { class: 'hsp' }), noteBtn, floatBtn, btn('x', 'x-lg', '', { 'aria-label': 'Bezár', onclick: () => togglePanel(false) }));
-  // méretezés mind a 4 oldalon és mind a 4 sarokban: [osztály, vízszintes irány, függőleges irány] (-1: bal/fent, 1: jobb/lent)
   const RZ = [['l', -1, 0], ['r', 1, 0], ['t', 0, -1], ['b', 0, 1], ['tl', -1, -1], ['tr', 1, -1], ['bl', -1, 1], ['br', 1, 1]];
   const rzEls = RZ.map(([k, dx, dy]) => { const el = h('div', { class: 'rz rz-' + k }); el.addEventListener('pointerdown', e => startResize(e, dx, dy)); return el; });
   const chatCnt = h('span', { class: 'cnt' }), roomNum = h('span', { class: 'num' });
@@ -3296,8 +3090,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     (view === 'chat' ? tabChat : tabRoom).focus();
   });
   let view = store.get('tcwt_view') === 'room' ? 'room' : 'chat';
-  // Verzió a panel jobb alsó sarkában; ha újabb érhető el, kiemelt „Frissítés” gomb. A frissítést a Tampermonkey
-  // végzi (egy script magát nem írhatja felül): a gomb a frissítő ablakát nyitja meg, ott egy kattintás.
   const verEl = h('button', { class: 'ver', type: 'button', onclick: () => {
     if (availVer) { window.open(updLink(availVer), '_blank', 'noopener'); return; }
     setText(verEl, 'Keresés…');
@@ -3354,8 +3146,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const hh = Math.floor(sec / 3600), mm = Math.floor(sec % 3600 / 60), ss = String(sec % 60).padStart(2, '0');
     return hh ? hh + ':' + String(mm).padStart(2, '0') + ':' + ss : mm + ':' + ss;
   };
-  // Előnézeti kép egy időponthoz az oldal lejátszójának saját képsorából (a tekerősáv fölötti kis kép is ebből
-  // jön): 3 másodpercenként egy kocka, a sprite.json mondja meg, hol van a képen. Ha nincs ilyen, nincs kép.
   function seekThumb(t, w) {
     try {
       const md = window.metadata, sp = window.preloadedSprites;
@@ -3465,7 +3255,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     dock.style.right = pos.r + 'px'; dock.style.bottom = pos.b + 'px';
   }
   try { size = JSON.parse(store.get('tcwt_size') || 'null'); } catch (e) {}
-  // A fejléc (logó, kapcsolat-állapot, gombok) sosem nyomódik össze: a panel legalább ilyen széles marad.
   let chipW = 0, headMin = 0;
   function measureHead() {
     if (isMobile()) { headMin = 0; panel.style.removeProperty('--pmin'); return; }
@@ -3496,8 +3285,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   addEventListener('resize', clampSize);
   try { document.fonts.addEventListener('loadingdone', () => clampSize()); } catch (e) {}
 
-  // A panel helye a képernyő jobb és alsó szélétől számít: bal/felső oldalon a méret változik, a jobb/alsó
-  // szélnél viszont a szemközti oldal marad a helyén, ezért a hely is vele mozog (és nem lóg ki a képernyőről).
   function startResize(e, dx, dy) {
     if (isMobile() || e.button > 0) return;
     e.preventDefault();
@@ -3644,7 +3431,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const n = key === 'ok' && client ? client.cs.filter(c => c.connected).length : 0;
     connChip.title = (CONN_TXT[key] || '') + (n ? ' (' + n + '/' + BROKERS.length + ' szerver)' : '');
   }
-  // Hálózat vissza: nem várjuk ki a következő újrapróbálást.
   addEventListener('offline', () => { if (client && room) setConn('off'); });
   addEventListener('online', () => { if (client && room && !client.connected) { setConn('wait'); try { client.reconnect(); } catch (e) {} } });
   function setActivity(t) { activityEl.textContent = t; updateStatus(); }
@@ -3682,8 +3468,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const list = [{ n: shown(), self: true, h: isHost, ui: myUi, v: VPATH, t: pageLabel(), u: location.pathname + location.search, no: myNote }, ...others];
     setText(countEl, 'Nézők (' + list.length + ')');
     setText(roomNum, String(list.length));
-    // Csak akkor rajzoljuk újra a listát, ha tényleg változott benne valami (a 4 mp-es szinkronüzenetek
-    // ne cseréljék le folyton a DOM-ot: nem villognak a profilképek, nem vész el az egér alatti gomb).
     const here0 = location.pathname + location.search;
     const sig = JSON.stringify([isHost, roomV, here0, modArmed && [modArmed.c, modArmed.act],
       list.map(m => [m.n, m.self ? 1 : 0, m.h ? 1 : 0, m.ui, m.v, m.t, m.u, m.ghost ? 1 : 0, m.c, m.tb, m.a ? 1 : 0, m.no || ''])]);
@@ -3790,8 +3574,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       if (node.querySelectorAll) node.querySelectorAll('img').forEach(im => { if (!im.complete) im.addEventListener('load', toBottom, { once: true }); });
     }
   }
-  // Időbélyegek a chatben (1:20, 00:28, 1:02:03, 00:00:01 – mint az oldal kommentjeiben). Csak akkor kattintható,
-  // ha az üzenet ahhoz a videóhoz íródott, amit épp nézel, és az időpont belefér a videó hosszába.
   const STAMP = /(?:(\d{1,2}):)?(\d{1,2}):(\d{2})/g;
   const videoLen = () => { const v = getVideo(); return v && isFinite(v.duration) && v.duration > 0 ? v.duration : 0; };
   function stampParts(text, vid) {
@@ -3827,7 +3609,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       .map((p, i) => i % 2 ? (SMILEY_SET.has(p) ? smileyImg(p) : '[s:' + p + ']') : (p === '' ? p : stampParts(p, vid)))
       .flat().filter(p => p !== '');
   }
-  // Amikor kiderül a videó hossza (vagy megváltozik), az időbélyegek újraszámolódnak.
   let stampLen = 0;
   setInterval(() => {
     const len = Math.round(videoLen());
@@ -3857,7 +3638,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   const LOG_MAX = 150, HIST_MAX = 100;
   let chatLog = [];
   const seenIds = new Set();
-  // Küldőnként egyedi: egy idegen nem „foglalhatja le” más üzenetének azonosítóját, hogy az ne jelenjen meg.
   const seenKey = r => (r.c || '') + '/' + r.id;
 
   let saveTimer = null, saveRoom = '';
@@ -3900,12 +3680,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     renderChat();
   }
   const VIDEO_MSG = 'Új videó: ';
-  // Rendszerüzenet a chatben; a videóváltásnál a videó bélyegképével (csak a videó számából építve).
-  // A videókártyák egyforma szélesek (szép lista lesz belőlük), látszik rajtuk az idő, és kattintásra a videó
-  // új lapon nyílik meg – a szoba lapja közben marad, ahol volt.
-  // Videókártya adatai: a videó oldalából (feltöltő, megtekintések, mikor töltötték fel, címkék) – mindenki maga
-  // tölti le az oldalról, így nem kell küldeni, és hamisítani sem lehet. A hosszt az tudja, aki épp azt nézi.
-  // A böngészőlapon belül megjegyezzük; oldalanként legfeljebb néhány lekérés (a legutóbbi kártyákhoz).
   function viSet(id, patch) {
     if (!/^\d{1,10}$/.test(id)) return;
     vinfo[id] = Object.assign({}, vinfo[id], patch, { at: Date.now() });
@@ -3915,8 +3689,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     refreshCards(id);
     if (inQueue(id)) renderQueue();
   }
-  // Futószalag: ha egy információs sor nem fér ki, oda-vissza lassan végigfut (rámutatva megáll). Csak akkor
-  // indul, ha tényleg kilóg. (A „kevesebb animáció” rendszerbeállításnál is fut: ezt kifejezetten kérték.)
   const mqObs = typeof ResizeObserver === 'function' ? new ResizeObserver(es => es.forEach(e => fitMarq(e.target))) : null;
   function fitMarq(el) {
     if (!el.isConnected) { mqObs.unobserve(el); mqEls.delete(el); return; }
@@ -3931,13 +3703,12 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   }
   const mqEls = new Set();
   setInterval(() => { if (mqObs) mqEls.forEach(el => { if (!el.isConnected) { mqObs.unobserve(el); mqEls.delete(el); } }); }, 60000);
-  // Két sorra levágott cím: rámutatáskor egy sorban végigfut (a magassága közben nem változik).
   function hoverMarq(el) {
     let txt = null, wait = null;
     el.addEventListener('mouseenter', e => {
       clearTimeout(wait);
       if (e.buttons) return;
-      wait = setTimeout(start, 450);   // csak ha egy pillanatig rajta marad az egér (megfogáskor ne ugorjon a szöveg)
+      wait = setTimeout(start, 450);
     });
     el.addEventListener('pointerdown', () => clearTimeout(wait));
     const start = () => {
@@ -3963,8 +3734,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (mqObs) { mqObs.observe(el); mqEls.add(el); }
     return el;
   }
-  // A videó saját adatai a lejátszó alatti .card-sub dobozban vannak (feltöltő, megtekintés, kor); az oldalsáv
-  // ajánlott videóinál is van szem-ikon és „… ezelőtt”, ezért csak ebben a dobozban keresünk.
   function parseVideoPage(html) {
     const d = typeof html === 'string' ? new DOMParser().parseFromString(html, 'text/html') : html;
     const sub = d.querySelector('.content-left .card-sub') || d.querySelector('.card-sub');
@@ -3973,7 +3742,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const vm = eye && eye.parentElement ? /(\d[\d\s.]{0,12})/.exec(eye.parentElement.textContent) : null;
     const am = sub ? /(\d{1,4}\s+(?:másodperc|perc|órá|óra|nap|hét|het|hónap|év)\S*\s+ezelőtt)/.exec(sub.textContent) : null;
     const num = sel => { const e = d.querySelector(sel); const n = e ? parseInt(e.textContent.replace(/\D/g, ''), 10) : NaN; return isFinite(n) ? n : null; };
-    // Kategória: <b><a href="/videos/…">Név</a>, <a …>…</a></b> – a „Kategória nélkül” nem számít
     const cats = [];
     for (const a of d.querySelectorAll('.content-left a[href^="/videos/"], .card-sub ~ * a[href^="/videos/"]')) {
       const box = a.closest('div');
@@ -3982,21 +3750,15 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       if (n && !cats.includes(n)) cats.push(n);
       if (cats.length >= 4) break;
     }
-    // 18+: a videó oldalán (az „elmúltam 18” süti nélkül) a lejátszó el van mosva, és megerősítést kér
     const a18 = !!(d.querySelector('.video-container.BLURTHIS') || [...d.querySelectorAll('script:not([src])')].some(x => /elmúlt 18 éves/.test(x.textContent)));
     return { ok: 1, a18, cats, u: up ? clean(up.textContent.trim(), 40) : '', views: vm ? +vm[1].replace(/\D/g, '') : null, age: am ? am[1].replace(/\s+/g, ' ') : '',
       lk: num('[id^="likes_video_"]'), dl: num('[id^="dislikes_video_"]') };
   }
-  // Lekérési sor: egyszerre legfeljebb kettő, oldalanként legfeljebb 16. A chat kártyái előre kerülnek (a legújabb
-  // az első, mert a chat régitől újig rajzolódik), a videósor elemei a végére. Sikertelen lekérést fél perc múlva
-  // még egyszer megpróbálunk. Az épp nyitott videó adatait magából az oldalból olvassuk, letöltés nélkül.
   const viFail = new Map();
-  // megvan-e minden adat (a 18+ jelzés is) egy videóról
   const viDone = id => !!(vinfo[id] && vinfo[id].ok && vinfo[id].a18 !== undefined);
   function wantVideoInfo(id, low) {
     if (!/^\d{1,10}$/.test(id || '') || viDone(id) || viPending.has(id)) return;
     if (id === vidId(VPATH) && document.body && !(vinfo[id] && vinfo[id].ok)) {
-      // a saját oldal adatai azonnal; a 18+ jelzés innen nem látszik (megvan a süti), az a lekérésből jön
       let r = null; try { r = parseVideoPage(document); } catch (e) {}
       if (r && (r.u || r.cats.length || r.views != null)) { delete r.a18; viSet(id, r); }
     }
@@ -4010,13 +3772,12 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     while (viActive < 2 && viWait.length && viLeft > 0) {
       const id = viWait.shift();
       viLeft--; viActive++;
-      // süti nélkül kérjük le: így látszik, ha 18+ (a megerősítő süti mellett nem), az adatok ugyanazok
       const get = cred => fetch(location.origin + '/video/' + id, { credentials: cred }).then(r => (r.ok ? r.text() : null));
       get('omit')
         .then(async html => {
           if (!html) throw 0;
           let r = parseVideoPage(html);
-          if (!r.u && r.views == null && !r.cats.length) {   // ha kijelentkezve nem látszana: bejelentkezve
+          if (!r.u && r.views == null && !r.cats.length) {
             const h2 = await get('same-origin').catch(() => null);
             if (h2) r = Object.assign(parseVideoPage(h2), { a18: r.a18 });
           }
@@ -4032,7 +3793,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     msgsEl.querySelectorAll('.svid[data-vid="' + id + '"]').forEach(n => { const r = cardRec.get(n); if (r) n.replaceWith(sysNode(r)); });
     if (keep) msgsEl.scrollTop = msgsEl.scrollHeight;
   }
-  // Információs sor darabjai: szöveg, vagy [ikon, szöveg]; köztük „ · ”.
   function metaLine(parts) {
     const out = [];
     parts.filter(Boolean).forEach((p, i) => {
@@ -4044,7 +3804,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   }
   const siteIcon = n => { const e = icon(n); e.setAttribute('class', 'bi si'); return e; };
   const views = i => i.views != null && isFinite(i.views) ? ['site-eye', i.views.toLocaleString('hu-HU')] : null;
-  // „3 hónappal ezelőtt” → „3 hónapja” (rövidebb, jobban elfér)
   const AGE_UNITS = [[/^másodperc/, 'másodperce'], [/^perc/, 'perce'], [/^ór/, 'órája'], [/^nap/, 'napja'], [/^h[ée]t/, 'hete'], [/^hónap/, 'hónapja'], [/^év/, 'éve']];
   function shortAge(a) {
     const m = /^(\d+)\s+(\S+)\s+ezelőtt$/.exec(String(a || '').trim());
@@ -4078,8 +3837,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     cardRec.set(node, r);
     return node;
   }
-  // Az azonos fajtájú, gyorsan egymást követő rendszerüzenetek (pl. ki-be lépés) egy sorba olvadnak. A videóváltások
-  // viszont mind külön maradnak, így visszanézhető, mi ment le – csak az pár mp alatt továbbléptetett videó cserélődik.
   function sysMsg(text, kind, vid, vp) {
     const last = chatLog[chatLog.length - 1], node = msgsEl.lastElementChild;
     const win = kind === 'video' ? 5000 : 60000;
@@ -4113,7 +3870,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     };
   }
 
-  // w: az aláírt eredeti (ezzel együtt adjuk tovább az előzményekben, így ott sem hamisítható).
   function addChat(msg, mine, w) {
     const r = chatRec(msg);
     if (!r) return null;
@@ -4224,7 +3980,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     a.onfinish = kill;
   }
 
-  // Az előzmények minden üzenete a saját küldője aláírásával jön: amit más hamisított bele, kimarad.
   async function onHistory(list) {
     if (!Array.isArray(list)) return;
     const key = roomKey;
@@ -4326,7 +4081,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     inputEl.scrollTop = inputEl.scrollHeight;
   }
 
-  // Szöveg beszúrása a chat beviteli mezőjébe a kurzorhoz (vagy a végére).
   function insertChatText(text) {
     let r = savedRange && inputEl.contains(savedRange.startContainer) ? savedRange : null;
     if (!r) { r = document.createRange(); r.selectNodeContents(inputEl); r.collapse(false); }
@@ -4340,8 +4094,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (s) { s.removeAllRanges(); s.addRange(r); }
     savedRange = r.cloneRange();
   }
-  // Az oldal jobb-kattintós lejátszó-menüjébe (Ismétlés, Link másolása…) egy saját pont: az aktuális időpontot
-  // beírja a chatbe, a többieknél ez kattintható időbélyeg lesz. Csak szobában, a szoba videóján látszik.
   const onRoomVideoNow = () => !!(room && VPATH && roomV && sameVideo(VPATH, roomV));
   function stampToChat() {
     const v = getVideo();
@@ -4437,24 +4189,17 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
 
   const inviteCode = (c => validCode(c) ? c : '')((location.hash.match(/tcwt=([a-z0-9]+)/i)?.[1] || '').toLowerCase());
 
-  // ---------- Automatikus lejátszás: következő videó gomb és kapcsoló az oldal lejátszóján (mint a YouTube-on).
-  // A következő videó az oldal „kapcsolódó videók” listájának első eleme. Szobában csak a host válthat;
-  // a nézőket úgyis a host videója viszi tovább.
   (function autoNextInit() {
     if (!VPATH) return;
     const AP_KEY = 'tcwt_autonext', WAIT_S = 5;
     const isOn = () => store.get(AP_KEY) === '1';
     const canSwitch = () => !room || (isHost && isLead());
-    // a közös sorból a hostnál akkor is jön a következő, ha az automatikus lejátszás ki van kapcsolva
     const wantsNext = () => isOn() || !!(room && isHost && qNext());
-    // Az ezen a lapon már látott videók (legrégebbi elöl). Enélkül két videó egymást ajánlotta volna első helyen,
-    // és az automatikus lejátszás a végtelenségig ezek között ugrált volna.
     const SEEN_KEY = 'tcwt_seen';
     const seenList = () => { try { const a = JSON.parse(sess.get(SEEN_KEY) || '[]'); return Array.isArray(a) ? a.filter(x => typeof x === 'string').slice(-60) : []; } catch (e) { return []; } };
     { const cur = vidId(VPATH), a = seenList().filter(x => x !== cur); a.push(cur); sess.set(SEEN_KEY, JSON.stringify(a.slice(-60))); }
     function nextVideo() {
       const cur = vidId(VPATH), seen = seenList(), got = new Set();
-      // szobában a közös sor az első
       const fromQ = room && qNext();
       if (fromQ) return { p: fromQ.p, id: fromQ.id, title: fromQ.t, q: true, s: fromQ.s, a18: fromQ.a18 };
       let best = null, bestRank = Infinity;
@@ -4464,7 +4209,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
         const id = p && vidId(p);
         if (!id || id === cur || got.has(id)) continue;
         got.add(id);
-        const rank = seen.indexOf(id);               // -1: még nem láttuk; különben minél régebben, annál jobb
+        const rank = seen.indexOf(id);
         if (rank >= bestRank) continue;
         const box = a.closest('.related-video');
         const t = box && [...box.querySelectorAll('.content-info a')].map(x => x.textContent.replace(/\s+/g, ' ').trim()).find(Boolean);
@@ -4485,8 +4230,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const PLAY = 'M8 5v14l11-7z', PAUSE = 'M6 5h4v14H6zm8 0h4v14h-4z';
     let nextBtn = null, apBtn = null, apKnob = null, apTip = null, card = null, timer = null, fitted = null;
 
-    // Biztonsági fék: ha háromszor egymás után úgy ugrott tovább, hogy a videóból 2 mp-nél kevesebb ment le ezen
-    // az oldalon (vagyis senki nem nézte), nem indul újabb visszaszámlálás – a kártya ott marad, kattintásra megy tovább.
     const FAST_KEY = 'tcwt_apfast';
     const fastHops = () => +(sess.get(FAST_KEY) || 0) || 0;
     let played = 0, lastPT = -1;
@@ -4497,7 +4240,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       stop();
       markNav();
       sess.set(FAST_KEY, String(auto && played < 2 ? fastHops() + 1 : 0));
-      // Az automatikus váltás is új bejegyzés: a Vissza gombbal az előző videóra lehet lapozni.
       if (n.q) openQueued(n); else location.href = location.origin + n.p;
     }
     function stop() {
