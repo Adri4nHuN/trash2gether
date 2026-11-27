@@ -482,7 +482,7 @@
     if (modArmed) { clearTimeout(modArmed.t); modArmed = null; }
     members.clear(); ownTabs.clear(); kickedAt.clear(); lastAt.clear(); presAt.clear(); chatRate.clear(); devSeen.clear(); joinedAt = 0; oldNoted = false;
     hostCands.clear(); authWait.ban.clear(); authWait.cfg.clear(); authWait.q.clear(); stateWait = null;
-    queue = []; qV = 0;
+    queue = []; qV = 0; qPend = [];
     resetRate();
     if (baseRate !== 1) { const v = getVideo(); if (v) setRate(v, 1); baseRate = 1; }
     clearTimeout(stallTimer); stalled = false; holdShown = false;
@@ -508,6 +508,7 @@
     lockV = +sess.get('tcwt_lockv_' + code) || 0;
     locked = sess.get('tcwt_lock_' + code) === '1';
     loadQueue(code);
+    loadPend();
     myJoin();
     isHost = ownsHost();
     initLead(code);
@@ -1217,6 +1218,7 @@
     else if (sub === 'cfg') onCfg(m);
     else if (sub === 'q') onQueue(m);
     else if (sub === 'm' && m.k === 'qadd') onSuggest(m, s);
+    else if (sub === 'm' && (m.k === 'qacc' || m.k === 'qrej')) onQDecision(m, s);
     else if (sub === 'ban') onBans(m, retained);
     else if (sub === 'm' && m.k === 'kick') onKick(m);
     else if (sub === 'm' && m.k === 'chat') {
@@ -1520,7 +1522,7 @@
     if (m.lock === locked) return;
     locked = m.lock;
     sess.set('tcwt_lock_' + room, locked ? '1' : '0');
-    if (stateSeen) sysMsg(locked ? 'Csak a host kontrollál 🔒' : 'Mindenki tudja kontrollálni a lejátszást 🔓', 'lock');
+    if (stateSeen) sysMsg(locked ? 'Csak a host kontrollál (lejátszás, lista) 🔒' : 'Mindenki kontrollálhatja a lejátszást és bővítheti a listát 🔓', 'lock');
     renderMembers();
   }
   // ---- Közös videósor (Lista) ----
@@ -1554,6 +1556,36 @@
   }
   const queueMsg = () => ({ id: sid, c: cid, list: queue, v: qV });
   let qFixTimer = null;
+  // Korlátozáskor a nézők hozzáadása csak kérés: a host gépén gyűlik (a host minden lapja látja, a böngésző
+  // tárolójában), és a host egyenként jóváhagyja (✓) vagy elveti (✗).
+  const QP_MAX = 10;
+  let qPend = [];
+  const pendKey = () => 'tcwt_qp_' + room;
+  function loadPend() {
+    let a = null;
+    try { a = JSON.parse(store.get(pendKey()) || 'null'); } catch (e) {}
+    qPend = Array.isArray(a) ? a.map(p => p && { it: qItem(p.it), n: cleanName(p.n), c: typeof p.c === 'string' ? p.c.slice(0, 20) : '', at: +p.at || 0 }).filter(p => p && p.it).slice(0, QP_MAX) : [];
+  }
+  function savePend() { if (room) { if (qPend.length) store.set(pendKey(), JSON.stringify(qPend)); else store.del(pendKey()); } renderMembers(); }
+  addEventListener('storage', e => { if (room && e.key === pendKey()) { loadPend(); renderMembers(); } });
+  function qDecide(id, yes) {
+    if (!canEditQ()) return;
+    loadPend();
+    const p = qPend.find(x => x.it.id === id);
+    if (!p) return;
+    qPend = qPend.filter(x => x !== p);
+    savePend();
+    const added = yes && qAddLocal(p.it);
+    if (added) sysMsg('➕ ' + p.n + ' hozzáadta: ' + p.it.t);
+    // a többieknek (és a kérőnek) is szólunk
+    publish('m', { id: sid, c: cid, k: yes && added ? 'qacc' : 'qrej', n: p.n, to: p.c, t: p.it.t, ts: Date.now(), q: rand(8) });
+  }
+  function onQDecision(m, s) {
+    if (!fresh(m) || !hostRec || s !== hostRec.c) return;
+    const t = clean(m.t || '', TITLE_MAX);
+    if (m.k === 'qacc') sysMsg('➕ ' + cleanName(m.n) + ' hozzáadta: ' + t);
+    if (m.to === cid) showToast([icon(m.k === 'qacc' ? 'check-lg' : 'x-lg'), h('span', { text: m.k === 'qacc' ? ' A host jóváhagyta: ' + cut(t, 40) : ' A host nem fogadta el: ' + cut(t, 40) })], 3000, '');
+  }
   // A listát a host eszközének bármelyik lapja szerkesztheti (ugyanaz az eszköz írja alá, a többiek elfogadják):
   // így a gombok és a húzás akkor is megvannak, ha épp egy másik lapodon vagy a szobában.
   const canEditQ = () => !!room && (isHost || !!(hostConfirmed && hostRec && hostRec.c === cid));
@@ -1621,7 +1653,7 @@
       return false;
     }
     publish('m', { id: sid, c: cid, k: 'qadd', n: shown(), ts: Date.now(), q: rand(8), it: { id: it.id, p: it.p, t: it.t, d: it.d, s: it.s, a18: it.a18 } });
-    showToast([icon('check-lg'), h('span', { text: ' Listára téve' })], 1600, '');
+    showToast([icon('check-lg'), h('span', { text: locked ? ' Elküldve a hostnak jóváhagyásra' : ' Listára téve' })], locked ? 2400 : 1600, '');
     return true;
   }
   const sugRate = new Map();
@@ -1635,6 +1667,16 @@
     if (!it) return;
     // csak az kerül a chatbe, amit a host tényleg felvehet (nincs már a listán, nem ez megy épp, van hely)
     if (inQueue(it.id) || queue.length >= Q_MAX) return;
+    if (locked) {   // korlátozva: kérés a hostnak, jóváhagyásig a chatbe sem kerül
+      if (isHost) {
+        loadPend();
+        if (qPend.some(x => x.it.id === it.id) || qPend.length >= QP_MAX) return;
+        qPend.push({ it, n: cleanName(m.n), c: s, at: Date.now() });
+        savePend();
+        showToast([icon('plus-lg'), h('span', { text: ' ' + cut(cleanName(m.n), 20) + ' hozzá szeretné adni: ' + cut(it.t, 40) })], 4000, '');
+      }
+      return;
+    }
     sysMsg('➕ ' + cleanName(m.n) + ' hozzáadta: ' + it.t);
     if (isHost) qAddLocal(it);
   }
@@ -2352,6 +2394,11 @@ header .x.off{opacity:.5}
 .qthumb{width:64px;height:36px;object-fit:cover;border-radius:5px;flex:none;background:var(--s2)}
 .qinfo{min-width:0;flex:1;text-decoration:none;color:inherit}
 .qlist .qrow.now{border:2px solid var(--hi);border-radius:8px;padding:6px;margin:4px 0;background:color-mix(in srgb,var(--hi) 10%,transparent)}
+.qpend{margin:6px 0 2px;padding:6px 8px 2px;border:1px dashed var(--hi);border-radius:8px;background:color-mix(in srgb,var(--hi) 6%,transparent)}
+.qpcap{font:600 12px/1.3 var(--body);color:var(--hi)}
+.qpend .qrow{border-bottom:0;padding:4px 0}
+.qb.ok{color:#2ecc71}.qb.ok:hover{background:rgba(46,204,113,.16)}
+.qb.no{color:#ff5c5c}.qb.no:hover{background:rgba(255,92,92,.16)}
 .qrow.drag{cursor:grab;user-select:none;-webkit-user-select:none}
 .qrow.dragging{opacity:.5;cursor:grabbing}
 .qrow.dropb{box-shadow:inset 0 2px 0 var(--btn)}
@@ -2395,9 +2442,8 @@ a.qb{text-decoration:none}
   font:400 14px/1.45 var(--body);outline:0;overflow-wrap:anywhere;white-space:pre-wrap}
 .nfield:focus{border-color:var(--btn)}
 .nfield:empty::before{content:attr(data-ph);color:var(--mu);pointer-events:none}
-.nhint{font:400 11.5px/1.3 var(--body);color:var(--mu)}
-.nhint.flash{animation:t2gflash 1.2s}
-@keyframes t2gflash{0%,40%{color:#ff6b6b}100%{color:var(--mu)}}
+.nerr{font:600 12px/1.3 var(--body);color:#ff5c5c;margin-top:-2px}
+.nerr[hidden]{display:none}
 .nkeys{display:grid;grid-template-columns:repeat(auto-fill,minmax(32px,1fr));gap:2px;max-height:112px;overflow:auto;padding:4px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s1)}
 .nkey{height:32px;padding:3px;border:0;border-radius:6px;background:none;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .nkey:hover,.nkey:focus-visible{background:var(--s2);outline:0}
@@ -2913,9 +2959,14 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const acts = h('div', { class: 'qacts' });
     const open = h('a', { class: 'qb', href: location.origin + it.p + (it.s ? '?t=' + it.s : ''), target: '_blank', rel: 'noopener',
       title: 'Megnyitás új lapon', 'aria-label': 'Megnyitás új lapon: ' + it.t, onclick: e => e.stopPropagation() }, icon('box-arrow-up-right'));
+    if (mode === 'pend') {
+      acts.append(btn('qb ok', 'check-lg', '', { type: 'button', title: 'Jóváhagyás', 'aria-label': 'Jóváhagyás', onclick: () => qDecide(it.id, true) }),
+        btn('qb no', 'x-lg', '', { type: 'button', title: 'Elutasítás', 'aria-label': 'Elutasítás', onclick: () => qDecide(it.id, false) }), open);
+      return h('div', { class: 'qrow', 'data-id': it.id }, img, info, acts);
+    }
     if (mode === 'res') {
       const row = h('div', { class: 'qrow pick', role: 'button', tabindex: '0' }, img, info, acts);
-      const mark = () => { row.classList.add('added'); row.setAttribute('aria-disabled', 'true'); row.title = 'Már a listán van'; acts.prepend(h('span', { class: 'qok' }, icon('check-lg'))); };
+      const mark = () => { row.classList.add('added'); row.setAttribute('aria-disabled', 'true'); row.title = locked && !canEditQ() && !inQueue(it.id) ? 'Elküldve jóváhagyásra' : 'Már a listán van'; acts.prepend(h('span', { class: 'qok' }, icon('check-lg'))); };
       const add = () => { if (!row.classList.contains('added') && suggest(it)) mark(); };
       row.title = 'Listára';
       row.addEventListener('click', add);
@@ -2982,16 +3033,19 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   }
   let qSig = '';
   function renderQueue() {
-    const cnt = queue.length ? 'Lista (' + queue.length + ')' : 'Lista';
+    const pend = canEditQ() ? qPend : [];
+    const cnt = (queue.length ? 'Lista (' + queue.length + ')' : 'Lista') + (pend.length ? ' · ' + pend.length + ' kérés' : '');
     if (qCount.textContent !== cnt) qCount.textContent = cnt;
     // a nézők listájával együtt sokszor hívódik: csak akkor rajzoljuk újra, ha a lista (vagy az adatai) változtak,
     // különben újraindulnának a futószalagok, és a képek is újratöltődnének
     const curId = vidId(roomV || '');
     if (qDrag && Date.now() - qDragAt > 60000) qDrag = null;   // biztonsági fék: beragadt húzás
-    const sig = JSON.stringify([canEditQ(), curId, queue, queue.map(x => vinfo[x.id] ? [vinfo[x.id].at, vinfo[x.id].a18] : 0)]);
+    const sig = JSON.stringify([canEditQ(), curId, queue, queue.map(x => vinfo[x.id] ? [vinfo[x.id].at, vinfo[x.id].a18] : 0), pend.map(p => [p.it.id, p.n])]);
     if ((sig !== qSig || !qList.firstChild) && !qDrag) {
       qSig = sig;
-      qList.replaceChildren(...(queue.length ? queue.map((it, i) => qRow(it, 'q', i)) : [h('div', { class: 'muted qnote', text: 'A lista üres' })]));
+      qList.replaceChildren(...(queue.length ? queue.map((it, i) => qRow(it, 'q', i)) : [h('div', { class: 'muted qnote', text: 'A lista üres' })]),
+        // a függő kérések csak a hostnak, a lista végén (ide kerülnének)
+        ...pend.map(p => h('div', { class: 'qpend' }, h('div', { class: 'qpcap', text: p.n + ' hozzá szeretné adni:' }), qRow(p.it, 'pend'))));
     }
     const here = vidId(VPATH);
     qHereBtn.style.display = room && here && !inQueue(here) ? '' : 'none';
@@ -3071,9 +3125,12 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     setTimeout(() => { const f = notePop.querySelector('.nfield'); f.focus(); const r = document.createRange(); r.selectNodeContents(f); r.collapse(false); const sel = getSel(); if (sel) { sel.removeAllRanges(); sel.addRange(r); } }, 30);
   }
   function buildNotePop() {
-    const field = h('div', { class: 'nfield', contenteditable: 'true', role: 'textbox', 'aria-label': 'Állapot', 'data-ph': 'Mit csinálsz épp?', spellcheck: 'false' });
+    const field = h('div', { class: 'nfield', contenteditable: 'true', role: 'textbox', 'aria-label': 'Állapot', 'data-ph': 'Adj meg egy státuszt', spellcheck: 'false' });
     const count = h('span', { class: 'ncount' });
-    const hint = h('div', { class: 'nhint', text: 'Csak betű, szám, írásjel és az oldal smiley-jai.' });
+    // hibaüzenet csak akkor, ha tényleg kiszűrtünk valamit (vagy betelt a smiley-keret); pár mp múlva eltűnik
+    const hint = h('div', { class: 'nerr', role: 'alert', hidden: 'hidden' });
+    let hintT = null;
+    const showErr = msg => { hint.textContent = msg; hint.hidden = false; clearTimeout(hintT); hintT = setTimeout(() => { hint.hidden = true; }, 3500); };
     let range = null;
     const save = () => { const s2 = getSel(); if (s2 && s2.rangeCount && field.contains(s2.getRangeAt(0).startContainer)) range = s2.getRangeAt(0).cloneRange(); };
     const read = () => { let o = ''; field.childNodes.forEach(n => { if (n.nodeType === 3) o += n.nodeValue; else if (n.nodeName === 'IMG' && SMILEY_SET.has(n.dataset.s)) o += '[s:' + n.dataset.s + ']'; else o += noteChars(n.textContent); }); return o.replace(/\u00a0/g, ' '); };
@@ -3089,7 +3146,11 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       const bad = [...field.childNodes].some(n => n.nodeType !== 3 && !(n.nodeName === 'IMG' && SMILEY_SET.has(n.dataset.s)));
       // a kiszűrt karakterek előtti szóköz maradjon meg (pl. „szia 😀” → „szia ”, és lehet folytatni)
       const kept = Array.from(cur).filter(ch => NOTE_CHAR.test(ch) || ch === '[' || ch === ']').join('');
-      if (ok !== core || bad) { fill(ok + (/ $/.test(kept) && ok ? ' ' : '')); caretEnd(); hint.classList.remove('flash'); void hint.offsetWidth; hint.classList.add('flash'); }
+      if (ok !== core || bad) {
+        const invalid = bad || Array.from(core.replace(TOKEN, '')).some(ch => !NOTE_CHAR.test(ch));
+        fill(ok + (/ $/.test(kept) && ok ? ' ' : '')); caretEnd();
+        showErr(invalid ? 'A szöveg érvénytelen karaktert tartalmaz!' : 'Legfeljebb ' + NOTE_TEXT_MAX + ' karakter lehet.');
+      }
       paint();
     };
     field.addEventListener('input', e => { if (!e.isComposing) tidy(); save(); });
@@ -3104,7 +3165,8 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     field.addEventListener('keypress', e => e.stopPropagation());
     field.addEventListener('paste', e => {
       e.preventDefault();
-      const t = noteChars((e.clipboardData && e.clipboardData.getData('text/plain') || '').replace(/\s+/g, ' '));
+      const raw = (e.clipboardData && e.clipboardData.getData('text/plain') || '').replace(/\s+/g, ' '), t = noteChars(raw);
+      if (t !== raw) showErr('A szöveg érvénytelen karaktert tartalmaz!');
       if (t) { field.focus(); document.execCommand('insertText', false, t); }
     });
     field.addEventListener('drop', e => e.preventDefault());
@@ -3112,7 +3174,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       const b = h('button', { type: 'button', class: 'nkey', title: smileyName(f) }, smileyImg(f));
       b.addEventListener('mousedown', e => e.preventDefault());   // a mező maradjon fókuszban, a kurzor a helyén
       b.addEventListener('click', () => {
-        if ((read().match(TOKEN) || []).length >= NOTE_SMILEY_MAX) { hint.classList.remove('flash'); void hint.offsetWidth; hint.classList.add('flash'); return; }
+        if ((read().match(TOKEN) || []).length >= NOTE_SMILEY_MAX) { showErr('Legfeljebb ' + NOTE_SMILEY_MAX + ' smiley lehet.'); return; }
         const im = smileyImg(f); im.dataset.s = f;
         let r = range && field.contains(range.startContainer) ? range : null;
         if (!r) { r = document.createRange(); r.selectNodeContents(field); r.collapse(false); }
@@ -3597,7 +3659,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (src && thumbEl.getAttribute('src') !== src) thumbEl.src = src;
     if (tid) { if (!viDone(tid)) wantVideoInfo(tid, true); thumbEl.classList.toggle('a18', isA18(tid)); }
     setShow(thumbEl, src && src !== thumbBad);
-    const lockTxt = locked ? '🔒 Csak a host kontrollál.' : (isHost ? '🔓 Mindenki tudja kontrollálni a lejátszást.' : '');
+    const lockTxt = locked ? '🔒 Csak a host kontrollál (lejátszás, lista).' : (isHost ? '🔓 Mindenki tudja kontrollálni a lejátszást.' : '');
     setText(lockNote, lockTxt);
     if (lockNote.classList.contains('open') === locked) lockNote.classList.toggle('open', !locked);
     setShow(lockNote, lockTxt);
@@ -3607,7 +3669,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (lockShown !== locked) {
       lockShown = locked;
       lockBtn.replaceChildren(icon(locked ? 'unlock' : 'lock'), h('span', { text: locked ? 'Feloldás' : 'Korlátozás' }));
-      lockBtn.title = locked ? 'Mindenki kontrollálhassa a lejátszást' : 'Csak a host kontrollálhassa a lejátszást';
+      lockBtn.title = locked ? 'Mindenki kontrollálhassa a lejátszást és bővíthesse a listát' : 'Csak a host kontrollálja a lejátszást; a listához csak jóváhagyással lehet hozzáadni';
     }
     setShow(hostBox, txt || locked || isHost);
     setShow(jumpBtn, mode === 'here');
