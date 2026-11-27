@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.24
+// @version      1.25
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -23,7 +23,7 @@
   window.__trash2gether = true;
   de.setAttribute('data-trash2gether', '');
 
-  const SCRIPT_VERSION = '1.24';
+  const SCRIPT_VERSION = '1.25';
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
   const updLink = v => UPDATE_URL + (/raw\.githubusercontent\.com/.test(UPDATE_URL) && v ? '?v=' + encodeURIComponent(v) : '');
   const META_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.meta.js';
@@ -90,18 +90,37 @@
   const smileyUrl = f => SMILEY_BASE + f;
   const NOTE_TEXT_MAX = 80, NOTE_SMILEY_MAX = 6;
   const NOTE_CHAR = /[A-Za-z0-9\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F .,!?:;()'"%+\/&#-]/;
-  const noteChars = t => Array.from(String(t || '')).filter(ch => NOTE_CHAR.test(ch)).join('');
-  function cleanNote(raw) {
-    if (typeof raw !== 'string') return '';
-    let txt = 0, sm = 0, out = '';
-    String(raw).slice(0, 2000).split(TOKEN).forEach((p, i) => {
-      if (i % 2) { if (SMILEY_SET.has(p) && sm < NOTE_SMILEY_MAX) { sm++; out += '[s:' + p + ']'; } return; }
-      let t = noteChars(p).replace(/ {2,}/g, ' ');
-      if (txt + t.length > NOTE_TEXT_MAX) t = t.slice(0, Math.max(0, NOTE_TEXT_MAX - txt));
-      txt += t.length; out += t;
+  const NOTE_PART = /(\[(?:s|f):[^\]\s]{1,80}\])/;
+  function noteUnits(raw) {
+    const out = [];
+    if (typeof raw !== 'string') return out;
+    let f = 0, txt = 0, sm = 0;
+    raw.slice(0, 4000).split(NOTE_PART).forEach((p, i) => {
+      if (i % 2) {
+        const m = /^\[(s|f):(.+)\]$/.exec(p);
+        if (m[1] === 's') { if (SMILEY_SET.has(m[2]) && sm < NOTE_SMILEY_MAX) { sm++; out.push({ s: m[2] }); } }
+        else if (/^[0-7]$/.test(m[2])) f = +m[2];
+        return;
+      }
+      for (const ch of p.replace(/\u00a0/g, ' ')) {
+        if (!NOTE_CHAR.test(ch) || txt >= NOTE_TEXT_MAX) continue;
+        if (ch === ' ' && (!out.length || out[out.length - 1].c === ' ')) continue;
+        out.push({ c: ch, f }); txt++;
+      }
     });
-    return out.replace(/^ +| +$/g, '');
+    while (out.length && out[out.length - 1].c === ' ') out.pop();
+    return out;
   }
+  function noteString(units, plain) {
+    let out = '', f = 0;
+    for (const u of units) {
+      if (u.s) { out += '[s:' + u.s + ']'; continue; }
+      if (!plain && u.f !== f) { out += '[f:' + u.f + ']'; f = u.f; }
+      out += u.c;
+    }
+    return out;
+  }
+  const cleanNote = raw => noteString(noteUnits(raw));
 
   const mk = get => ({
     get: k => { try { return get().getItem(k); } catch (e) { return null; } },
@@ -944,7 +963,7 @@
     const u = safePath(location.pathname + location.search);
     const lp = location.pathname.replace(/\/+$/, '');
     const known = SITE_PAGES.some(x => x[0].test(lp)) || /^\/user(\/|$)/.test(lp);
-    return { c: cid, n: shown(), a: acct ? 1 : 0, hc: hostRec ? hostRec.c : undefined, br: client ? client.mask : undefined, v: VPATH, ui: myUi, t: u || known ? pageLabel() : 'Böngészik', u, j: myJoin(), tb: tabId, mv: mv || undefined, ld: ownLead() || isHost ? 1 : undefined, sv: SCRIPT_VERSION, no: myNote || undefined, ic: VPATH ? undefined : pageIcon() || undefined, at: Date.now() };
+    return { c: cid, n: shown(), a: acct ? 1 : 0, hc: hostRec ? hostRec.c : undefined, br: client ? client.mask : undefined, v: VPATH, ui: myUi, t: u || known ? pageLabel() : 'Böngészik', u, j: myJoin(), tb: tabId, mv: mv || undefined, ld: ownLead() || isHost ? 1 : undefined, sv: SCRIPT_VERSION, no: myNote ? noteString(noteUnits(myNote), true) : undefined, nf: myNote || undefined, ic: VPATH ? undefined : pageIcon() || undefined, at: Date.now() };
   };
   function announce(mv) {
     lastAnnounce = Date.now();
@@ -1323,7 +1342,7 @@
     const was = deviceOnline(c);
     if (m) {
       const mvMs = typeof m.mv === 'number' && isFinite(m.mv) ? Math.min(Math.max(m.mv, 0), 60000) : 0;
-      members.set(psid, { ic: typeof m.ic === 'string' && PAGE_ICONS.has(m.ic) ? m.ic : '', no: cleanNote(m.no), c: c.slice(0, 20), n: cleanName(m.n), hc: typeof m.hc === 'string' ? m.hc.slice(0, 20) : null, v: videoPath(m.v), ui: validUi(m.ui), t: clean(m.t || '', TITLE_MAX), u: safePath(m.u), j: +m.j || 0, a: !!m.a, tb: typeof m.tb === 'string' ? m.tb.slice(0, 20) : null, mv: mvMs ? Date.now() + mvMs : 0, ld: !!m.ld, at: m.at, rx: Date.now(), sv: typeof m.sv === 'string' ? m.sv.slice(0, 20) : '', br: Number.isInteger(m.br) ? m.br & ((1 << BROKERS.length) - 1) : 0 });
+      members.set(psid, { ic: typeof m.ic === 'string' && PAGE_ICONS.has(m.ic) ? m.ic : '', no: cleanNote(typeof m.nf === 'string' ? m.nf : m.no), c: c.slice(0, 20), n: cleanName(m.n), hc: typeof m.hc === 'string' ? m.hc.slice(0, 20) : null, v: videoPath(m.v), ui: validUi(m.ui), t: clean(m.t || '', TITLE_MAX), u: safePath(m.u), j: +m.j || 0, a: !!m.a, tb: typeof m.tb === 'string' ? m.tb.slice(0, 20) : null, mv: mvMs ? Date.now() + mvMs : 0, ld: !!m.ld, at: m.at, rx: Date.now(), sv: typeof m.sv === 'string' ? m.sv.slice(0, 20) : '', br: Number.isInteger(m.br) ? m.br & ((1 << BROKERS.length) - 1) : 0 });
       dropGhost(c);
       peerVersion(m.sv);
     } else {
@@ -2342,7 +2361,13 @@ a.qb{text-decoration:none}
 .member:last-child{border-bottom:0}
 .minfo{flex:1;min-width:0}
 .mname{font:600 14.5px/1.3 var(--body);color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mnote{font:italic 400 12.5px/1.35 var(--body);color:var(--sub);margin-top:1px}
+.mnote{font:400 12.5px/1.35 var(--body);color:var(--sub);margin-top:1px}
+.f1{font-weight:700}.f2{font-style:italic}.f4{text-decoration:underline;text-underline-offset:2px}
+.ntools{display:flex;gap:4px;margin-top:-2px}
+.nfmt{width:30px;height:28px;padding:0;border:1px solid var(--bd);border-radius:6px;background:var(--s1);color:var(--sub);cursor:pointer;font:400 14px/1 var(--body)}
+.nfmt:hover{background:var(--s2);color:var(--tx)}
+.nfmt[aria-pressed=true]{background:var(--btn);border-color:var(--btn);color:#fff}
+.nfmt.b{font-weight:800}.nfmt.i{font-style:italic;font-family:Georgia,serif}.nfmt.u{text-decoration:underline;text-underline-offset:2px}
 .mnote img,.nfield img{height:1.35em;width:auto;vertical-align:-.3em;margin:0 1px}
 .x.has{position:relative}
 .x.has::after{content:'';position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:var(--hi)}
@@ -3012,11 +3037,28 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (!on) floatLayer.querySelectorAll('.float').forEach(e => e.remove());
   }
   let myNote = cleanNote(store.get('tcwt_note') || '');
-  const noteParts = t => String(t || '').split(TOKEN).map((p, i) => i % 2 ? (SMILEY_SET.has(p) ? smileyImg(p) : '') : p).filter(x => x !== '');
+  const fmtClass = f => [1, 2, 4].filter(b => f & b).map(b => 'f' + b).join(' ');
+  function noteRuns(units, edit) {
+    const out = [];
+    let run = null;
+    for (const u of units) {
+      if (u.s) { const im = smileyImg(u.s); if (edit) im.dataset.s = u.s; out.push(im); run = null; continue; }
+      if (run && run.f === u.f) { run.t += u.c; continue; }
+      run = { f: u.f, t: u.c }; out.push(run);
+    }
+    return out.map(r => {
+      if (r.nodeType) return r;
+      if (!r.f) return document.createTextNode(r.t);
+      const sp = h('span', { class: fmtClass(r.f), text: r.t });
+      if (edit) sp.dataset.f = r.f;
+      return sp;
+    });
+  }
+  const noteParts = t => noteRuns(noteUnits(t));
   const noteBtn = btn('x', 'note', '', { onclick: e => { e.stopPropagation(); toggleNote(); } });
   const paintNoteBtn = () => {
     noteBtn.classList.toggle('has', !!myNote);
-    noteBtn.title = myNote ? 'Állapotod: ' + myNote.replace(TOKEN, '☺') : 'Állapot beállítása';
+    noteBtn.title = myNote ? 'Állapotod: ' + noteString(noteUnits(myNote), true).replace(TOKEN, '☺') : 'Állapot beállítása';
     noteBtn.setAttribute('aria-label', 'Állapot');
   };
   paintNoteBtn();
@@ -3035,62 +3077,234 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const hint = h('div', { class: 'nerr', role: 'alert', hidden: 'hidden' });
     let hintT = null;
     const showErr = msg => { hint.textContent = msg; hint.hidden = false; clearTimeout(hintT); hintT = setTimeout(() => { hint.hidden = true; }, 3500); };
-    let range = null;
-    const save = () => { const s2 = getSel(); if (s2 && s2.rangeCount && field.contains(s2.getRangeAt(0).startContainer)) range = s2.getRangeAt(0).cloneRange(); };
-    const read = () => { let o = ''; field.childNodes.forEach(n => { if (n.nodeType === 3) o += n.nodeValue; else if (n.nodeName === 'IMG' && SMILEY_SET.has(n.dataset.s)) o += '[s:' + n.dataset.s + ']'; else o += noteChars(n.textContent); }); return o.replace(/\u00a0/g, ' '); };
-    const fill = t => field.replaceChildren(...String(t).split(TOKEN).map((p, i) => { if (!(i % 2)) return p; const im = smileyImg(p); im.dataset.s = p; return im; }).filter(x => x !== ''));
-    const caretEnd = () => { const r = document.createRange(); r.selectNodeContents(field); r.collapse(false); const s2 = getSel(); if (s2) { s2.removeAllRanges(); s2.addRange(r); } range = r.cloneRange(); };
-    const paint = () => {
-      const cur = read(), sm = (cur.match(TOKEN) || []).length, tl = cur.replace(TOKEN, '').length;
-      count.textContent = tl + '/' + NOTE_TEXT_MAX + ' · ' + sm + '/' + NOTE_SMILEY_MAX + ' smiley';
-    };
-    const tidy = () => {
-      const cur = read(), core = cur.replace(/ {2,}/g, ' ').replace(/^ +| +$/g, ''), ok = cleanNote(core);
-      const junk = n => n.nodeType === 1 && n.nodeName !== 'IMG' && !n.textContent && !n.querySelector('img');
-      if ([...field.childNodes].some(junk)) { [...field.childNodes].filter(junk).forEach(n => n.remove()); }
-      const bad = [...field.childNodes].some(n => n.nodeType !== 3 && !(n.nodeName === 'IMG' && SMILEY_SET.has(n.dataset.s)));
-      const kept = Array.from(cur).filter(ch => NOTE_CHAR.test(ch) || ch === '[' || ch === ']').join('');
-      if (ok !== core || bad) {
-        const invalid = bad || Array.from(core.replace(TOKEN, '')).some(ch => !NOTE_CHAR.test(ch));
-        fill(ok + (/ $/.test(kept) && ok ? ' ' : '')); caretEnd();
-        showErr(invalid ? 'A szöveg érvénytelen karaktert tartalmaz!' : 'Legfeljebb ' + NOTE_TEXT_MAX + ' karakter lehet.');
+    const ERR_CHAR = 'A szöveg érvénytelen karaktert tartalmaz!', ERR_LEN = 'Legfeljebb ' + NOTE_TEXT_MAX + ' karakter lehet.', ERR_SM = 'Legfeljebb ' + NOTE_SMILEY_MAX + ' smiley lehet.';
+    let units = noteUnits(myNote), sel = [units.length, units.length], pend = null;
+    const undo = [], redo = [];
+    let snapped = false;
+    const snap = () => { undo.push({ u: units.map(x => ({ ...x })), s: sel.slice() }); if (undo.length > 60) undo.shift(); redo.length = 0; };
+    const textCount = us => us.filter(u => !u.s).length, smCount = us => us.filter(u => u.s).length;
+    const TAGF = { B: 1, STRONG: 1, I: 2, EM: 2, U: 4 };
+    function readDom() {
+      const out = [];
+      let bad = false;
+      const walk = (node, f) => node.childNodes.forEach(n => {
+        if (n.nodeType === 3) { for (const ch of n.nodeValue.replace(/ /g, ' ')) { if (NOTE_CHAR.test(ch)) out.push({ c: ch, f }); else if (ch !== '\n') bad = true; } return; }
+        if (n.nodeType !== 1) return;
+        if (n.nodeName === 'IMG') { if (SMILEY_SET.has(n.dataset.s)) out.push({ s: n.dataset.s }); else bad = true; return; }
+        if (n.nodeName === 'BR') return;
+        walk(n, f | (/^[0-7]$/.test(n.dataset.f || '') ? +n.dataset.f : 0) | (TAGF[n.nodeName] || 0));
+      });
+      walk(field, 0);
+      return { out, bad };
+    }
+    function fix(us) {
+      const out = [];
+      let txt = 0, sm = 0, err = '';
+      for (const u of us) {
+        if (u.s) { if (sm < NOTE_SMILEY_MAX) { sm++; out.push(u); } else err = err || ERR_SM; continue; }
+        if (u.c === ' ' && (!out.length || out[out.length - 1].c === ' ')) continue;
+        if (txt < NOTE_TEXT_MAX) { txt++; out.push(u); } else err = err || ERR_LEN;
       }
-      paint();
+      return { out, err };
+    }
+    function leaves() {
+      const out = [];
+      const walk = node => node.childNodes.forEach(n => { if (n.nodeType === 3 || n.nodeName === 'IMG') out.push(n); else if (n.nodeType === 1) walk(n); });
+      walk(field);
+      return out;
+    }
+    function toIndex(node, off) {
+      if (!field.contains(node)) return units.length;
+      const r = document.createRange();
+      r.setStart(field, 0);
+      try { r.setEnd(node, off); } catch (e) { return units.length; }
+      let n = 0;
+      const walk = x => x.childNodes.forEach(c => { if (c.nodeType === 3) n += Array.from(c.nodeValue).length; else if (c.nodeName === 'IMG') n++; else if (c.nodeType === 1) walk(c); });
+      walk(r.cloneContents());
+      return n;
+    }
+    function toPos(i) {
+      let n = 0;
+      const ls = leaves();
+      for (const l of ls) {
+        if (l.nodeType === 3) {
+          const len = Array.from(l.nodeValue).length;
+          if (i - n <= len) { const cps = Array.from(l.nodeValue).slice(0, i - n).join('').length; return [l, cps]; }
+          n += len;
+        } else {
+          if (i <= n) return [l.parentNode, [...l.parentNode.childNodes].indexOf(l)];
+          n++;
+        }
+      }
+      return [field, field.childNodes.length];
+    }
+    function getIdx() {
+      const s2 = getSel();
+      if (!s2 || !s2.rangeCount) return null;
+      const r = s2.getRangeAt(0);
+      if (!field.contains(r.startContainer) && r.startContainer !== field) return null;
+      const a = toIndex(r.startContainer, r.startOffset), b = toIndex(r.endContainer, r.endOffset);
+      return [Math.min(a, b), Math.max(a, b)];
+    }
+    function setIdx(a, b) {
+      sel = [a, b];
+      if (shadow.activeElement !== field) return;
+      const r = document.createRange(), p1 = toPos(a), p2 = toPos(b);
+      r.setStart(p1[0], p1[1]); r.setEnd(p2[0], p2[1]);
+      const s2 = getSel(); if (s2) { s2.removeAllRanges(); s2.addRange(r); }
+    }
+    const caretFmt = i => {
+      for (let k = i - 1; k >= 0; k--) if (!units[k].s) return units[k].f;
+      for (let k = i; k < units.length; k++) if (!units[k].s) return units[k].f;
+      return 0;
     };
-    field.addEventListener('input', e => { if (!e.isComposing) tidy(); save(); });
-    field.addEventListener('compositionend', tidy);
-    ['keyup', 'mouseup', 'focus'].forEach(ev => field.addEventListener(ev, save));
+    function curFmt() {
+      const [a, b] = sel;
+      if (a === b) return pend && pend.at === a ? pend.f : caretFmt(a);
+      const t = units.slice(a, b).filter(u => !u.s);
+      return t.length ? t.reduce((m, u) => m & u.f, 7) : caretFmt(a);
+    }
+    function paint() {
+      count.textContent = textCount(units) + '/' + NOTE_TEXT_MAX + ' · ' + smCount(units) + '/' + NOTE_SMILEY_MAX + ' smiley';
+      const f = curFmt();
+      fmtBtns.forEach(([bit, b]) => b.setAttribute('aria-pressed', f & bit ? 'true' : 'false'));
+    }
+    function render(a, b) {
+      field.replaceChildren(...noteRuns(units, true));
+      setIdx(a, b === undefined ? a : b);
+      paint();
+    }
+    function syncSel() {
+      const i = getIdx();
+      if (!i) return;
+      sel = i;
+      if (pend && (i[0] !== i[1] || i[0] !== pend.at)) pend = null;
+      paint();
+    }
+    function insert(newUnits) {
+      const [a, b] = getIdx() || sel;
+      snap();
+      const before = units.slice(0, a), after = units.slice(b);
+      let err = '';
+      const room = NOTE_TEXT_MAX - textCount(before) - textCount(after), sroom = NOTE_SMILEY_MAX - smCount(before) - smCount(after);
+      let t = 0, sm = 0;
+      const add = newUnits.filter(u => {
+        if (u.s) { if (sm < sroom) { sm++; return true; } err = err || ERR_SM; return false; }
+        if (t < room) { t++; return true; } err = err || ERR_LEN; return false;
+      });
+      const res = fix(before.concat(add, after));
+      units = res.out;
+      const at = Math.max(0, Math.min(units.length, units.length - after.length));
+      const keep = pend && pend.at === a ? pend : null;
+      render(at);
+      pend = keep && add.length ? null : keep;
+      if (err || res.err) showErr(err || res.err);
+    }
+    const insertText = (txt, f) => {
+      const [a] = getIdx() || sel;
+      const fm = f !== undefined ? f : (pend && pend.at === a ? pend.f : caretFmt(a));
+      let bad = false;
+      const add = [];
+      for (const ch of String(txt).replace(/[\r\n\t ]/g, ' ')) { if (NOTE_CHAR.test(ch)) add.push({ c: ch, f: fm }); else bad = true; }
+      if (add.length || bad) insert(add);
+      if (bad) showErr(ERR_CHAR);
+    };
+    const focusField = () => { if (shadow.activeElement !== field) { field.focus(); setIdx(sel[0], sel[1]); } };
+    function toggle(bit) {
+      focusField();
+      const [a, b] = getIdx() || sel;
+      if (a === b) {
+        const f = curFmt() ^ bit;
+        pend = { at: a, f };
+        sel = [a, a];
+        paint();
+        return;
+      }
+      const t = units.slice(a, b).filter(u => !u.s);
+      if (!t.length) return;
+      snap();
+      const on = !t.every(u => u.f & bit);
+      units = units.map((u, i) => i < a || i >= b || u.s ? u : { c: u.c, f: on ? u.f | bit : u.f & ~bit });
+      pend = null;
+      render(a, b);
+    }
+    function history(back) {
+      const from = back ? undo : redo, to = back ? redo : undo;
+      if (!from.length) return;
+      to.push({ u: units, s: sel.slice() });
+      const st = from.pop();
+      units = st.u; pend = null;
+      render(st.s[0], st.s[1]);
+    }
+    function afterNative() {
+      const { out, bad } = readDom();
+      const res = fix(out);
+      const i = getIdx() || sel;
+      if (!snapped && noteString(res.out) !== noteString(units)) snap();
+      snapped = false;
+      units = res.out;
+      const at = Math.min(i[0], units.length);
+      render(at);
+      if (bad) showErr(ERR_CHAR); else if (res.err) showErr(res.err);
+    }
+    field.addEventListener('beforeinput', e => {
+      const t = e.inputType || '';
+      if (e.isComposing || t === 'insertCompositionText') return;
+      if (/^format(Bold|Italic|Underline)$/.test(t)) { e.preventDefault(); toggle({ formatBold: 1, formatItalic: 2, formatUnderline: 4 }[t]); return; }
+      if (t === 'historyUndo' || t === 'historyRedo') { e.preventDefault(); history(t === 'historyUndo'); return; }
+      if (t === 'insertParagraph' || t === 'insertLineBreak') { e.preventDefault(); return; }
+      if (/^format/.test(t) || t === 'insertFromDrop' || t === 'deleteByDrag') { e.preventDefault(); return; }
+      if (t === 'insertText' || t === 'insertReplacementText' || t === 'insertFromPaste') {
+        let txt = e.data;
+        if (txt == null && e.dataTransfer) txt = e.dataTransfer.getData('text/plain');
+        if (txt == null) return;
+        e.preventDefault();
+        insertText(txt);
+        return;
+      }
+      if (/^delete/.test(t)) { const i = getIdx(); if (i) sel = i; snap(); snapped = true; pend = null; }
+    });
+    field.addEventListener('input', e => { if (!e.isComposing) afterNative(); });
+    field.addEventListener('compositionend', () => setTimeout(afterNative, 0));
+    ['keyup', 'mouseup', 'focus'].forEach(ev => field.addEventListener(ev, () => setTimeout(syncSel, 0)));
+    const onSelChange = () => { if (!field.isConnected) { document.removeEventListener('selectionchange', onSelChange); return; } if (shadow.activeElement === field) syncSel(); };
+    document.addEventListener('selectionchange', onSelChange);
     field.addEventListener('keydown', e => {
+      const k = (e.key || '').toLowerCase(), mod = (e.ctrlKey || e.metaKey) && !e.altKey;
       if (e.key === 'Enter') { e.preventDefault(); commit(); }
       else if (e.key === 'Escape') { e.preventDefault(); toggleNote(false); }
+      else if (mod && (k === 'b' || k === 'i' || k === 'u')) { e.preventDefault(); toggle({ b: 1, i: 2, u: 4 }[k]); }
+      else if (mod && (k === 'z' || k === 'y')) { e.preventDefault(); history(k === 'z' && !e.shiftKey); }
       e.stopPropagation();
     });
     field.addEventListener('keyup', e => e.stopPropagation());
     field.addEventListener('keypress', e => e.stopPropagation());
     field.addEventListener('paste', e => {
       e.preventDefault();
-      const raw = (e.clipboardData && e.clipboardData.getData('text/plain') || '').replace(/\s+/g, ' '), t = noteChars(raw);
-      if (t !== raw) showErr('A szöveg érvénytelen karaktert tartalmaz!');
-      if (t) { field.focus(); document.execCommand('insertText', false, t); }
+      const raw = (e.clipboardData && e.clipboardData.getData('text/plain') || '').replace(/\s+/g, ' ');
+      if (raw) insertText(raw);
     });
     field.addEventListener('drop', e => e.preventDefault());
+    field.addEventListener('dragstart', e => e.preventDefault());
+    const fmtBtns = [[1, 'b', 'F', 'Félkövér (Ctrl+B)'], [2, 'i', 'D', 'Dőlt (Ctrl+I)'], [4, 'u', 'A', 'Aláhúzott (Ctrl+U)']].map(([bit, cls, txt, title]) => {
+      const b = h('button', { type: 'button', class: 'nfmt ' + cls, text: txt, title, 'aria-label': title, 'aria-pressed': 'false' });
+      b.addEventListener('mousedown', e => e.preventDefault());
+      b.addEventListener('click', () => toggle(bit));
+      return [bit, b];
+    });
+    const tools = h('div', { class: 'ntools', role: 'toolbar', 'aria-label': 'Formázás' }, ...fmtBtns.map(x => x[1]));
     const kb = h('div', { class: 'nkeys', role: 'group', 'aria-label': 'Smiley-k' }, ...SMILEYS.map(f => {
       const b = h('button', { type: 'button', class: 'nkey', title: smileyName(f) }, smileyImg(f));
       b.addEventListener('mousedown', e => e.preventDefault());
       b.addEventListener('click', () => {
-        if ((read().match(TOKEN) || []).length >= NOTE_SMILEY_MAX) { showErr('Legfeljebb ' + NOTE_SMILEY_MAX + ' smiley lehet.'); return; }
-        const im = smileyImg(f); im.dataset.s = f;
-        let r = range && field.contains(range.startContainer) ? range : null;
-        if (!r) { r = document.createRange(); r.selectNodeContents(field); r.collapse(false); }
-        r.deleteContents(); r.insertNode(im); r.setStartAfter(im); r.collapse(true);
-        const s2 = getSel(); if (s2) { s2.removeAllRanges(); s2.addRange(r); }
-        range = r.cloneRange();
-        paint();
+        if (smCount(units) >= NOTE_SMILEY_MAX) { showErr(ERR_SM); return; }
+        focusField();
+        insert([{ s: f }]);
       });
       return b;
     }));
     function commit() {
-      const v = cleanNote(codesToSmileys(read()));
+      const v = cleanNote(codesToSmileys(noteString(units)));
       if (v !== myNote) {
         myNote = v;
         if (v) store.set('tcwt_note', v); else store.del('tcwt_note');
@@ -3099,13 +3313,13 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       }
       toggleNote(false);
     }
-    fill(myNote); paint();
+    field.replaceChildren(...noteRuns(units, true)); paint();
     const pop = h('div', { class: 'notepop', role: 'dialog', 'aria-label': 'Állapot' },
       h('div', { class: 'nhead' }, h('span', { class: 'ntitle', text: 'Állapot' }), count,
         btn('x nclose', 'x-lg', '', { title: 'Bezárás', 'aria-label': 'Bezárás', onclick: () => toggleNote(false) })),
-      field, hint, kb,
+      tools, field, hint, kb,
       h('div', { class: 'nrow' },
-        btn('btn sec', 'trash', 'Törlés', { title: 'Állapot törlése', onclick: () => { field.replaceChildren(); commit(); } }),
+        btn('btn sec', 'trash', 'Törlés', { title: 'Állapot törlése', onclick: () => { units = []; commit(); } }),
         btn('btn', 'check-lg', 'Mentés', { onclick: commit })));
     pop.addEventListener('pointerdown', e => e.stopPropagation());
     return pop;
