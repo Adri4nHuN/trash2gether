@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.14
+// @version      1.15
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -26,7 +26,7 @@
   de.setAttribute('data-trash2gether', '');
 
   // A fejléc @version sorával egyezzen (a release.py mindkettőt egyszerre írja át).
-  const SCRIPT_VERSION = '1.14';
+  const SCRIPT_VERSION = '1.15';
   // Ha valaki a szobában újabb változatot használ, felajánljuk a frissítést. A Tampermonkey a .user.js címet
   // megnyitva rögtön a frissítő oldalát mutatja; a bővítmény-kiadásban ez a projekt oldalára mutat (build.py).
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
@@ -1510,7 +1510,7 @@
     sess.set('tcwt_lock_' + room, locked ? '1' : '0');
     sess.set('tcwt_lockv_' + room, String(lockV));
     publish('cfg', { id: sid, c: cid, lock: locked, v: lockV }, true);
-    sysMsg(locked ? 'Korlátoztad: csak a host kontrollál 🔒' : 'Mindenki tudja kontrollálni a lejátszást 🔓', 'lock');
+    sysMsg(locked ? 'Korlátoztad: csak a host kontrollál (lejátszás, lista) 🔒' : 'Mindenki kontrollálhatja a lejátszást és bővítheti a listát 🔓', 'lock');
     renderMembers();
   }
   function onCfg(m) {
