@@ -2309,7 +2309,7 @@ header .x.off{opacity:.5}
 .qsearch{display:flex;gap:6px;margin-bottom:6px}
 .qsearch .field{min-height:38px;font-size:14px;padding:6px 10px}
 .btn.qbtn{width:auto;min-height:38px;padding:0 12px;flex:none}
-.btn.qhere{min-height:36px;font-size:13.5px;margin:0 0 6px}
+.btn.qhere{min-height:36px;font-size:13.5px;margin:0}
 .qres{max-height:260px;overflow:auto;border:1px solid var(--bd);border-radius:var(--r);margin-bottom:8px;padding:0 8px}
 .qnote{padding:8px 0}
 .qrow{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bd)}
@@ -2710,6 +2710,8 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   const qSearchBtn = btn('btn sec qbtn', 'search', '', { type: 'button', 'aria-label': 'Keresés', title: 'Keresés', onclick: () => runSearch() });
   qSearchIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } });
   // bemásolt linknél nem kell Entert nyomni
+  // ha kitörlik a keresett szöveget (vagy a mező saját ×-ével ürítik), a találatok is eltűnnek
+  qSearchIn.addEventListener('input', () => { if (!qSearchIn.value.trim()) { searchSeq++; qResults.hidden = true; qResults.replaceChildren(); } });
   qSearchIn.addEventListener('paste', () => setTimeout(() => { if (parseLink(qSearchIn.value.trim())) runSearch(); }, 0));
   const qResults = h('div', { class: 'qres', hidden: 'hidden' });
   const qHereBtn = btn('btn sec qhere', 'plus-lg', 'Ez a videó a listára', { type: 'button', onclick: () => {
@@ -2840,7 +2842,9 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     qHereBtn.style.display = room && here && !(roomV && sameVideo(VPATH, roomV)) && !inQueue(here) ? '' : 'none';
     qHereBtn.querySelector('span').textContent = 'Ez a videó a listára';
   }
-  const queueSec = section('queue', qCount, h('div', { class: 'qsearch' }, qSearchIn, qSearchBtn), qResults, qHereBtn, qList);
+  // külön összecsukható rész a lista és a keresés
+  const queueSec = section('queue', qCount, qList);
+  const searchSec = section('search', h('span', { text: 'Keresés' }), h('div', { class: 'qsearch' }, qSearchIn, qSearchBtn), qResults, qHereBtn);
 
   const liveEl = h('div', { class: 'top live', role: 'tabpanel' },
     section('room', h('span', { text: 'Vezérlés' }),
@@ -2850,6 +2854,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
         h('div', { class: 'coderow' }, codeEl, eyeBtn, codeBtn),
         leaveBtn)),
     queueSec,
+    searchSec,
     section('members', countEl,
       membersEl,
       banBox,
