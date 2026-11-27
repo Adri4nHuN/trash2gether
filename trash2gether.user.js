@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.15
+// @version      1.16
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -26,7 +26,7 @@
   de.setAttribute('data-trash2gether', '');
 
   // A fejléc @version sorával egyezzen (a release.py mindkettőt egyszerre írja át).
-  const SCRIPT_VERSION = '1.15';
+  const SCRIPT_VERSION = '1.16';
   // Ha valaki a szobában újabb változatot használ, felajánljuk a frissítést. A Tampermonkey a .user.js címet
   // megnyitva rögtön a frissítő oldalát mutatja; a bővítmény-kiadásban ez a projekt oldalára mutat (build.py).
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
@@ -1510,7 +1510,7 @@
     sess.set('tcwt_lock_' + room, locked ? '1' : '0');
     sess.set('tcwt_lockv_' + room, String(lockV));
     publish('cfg', { id: sid, c: cid, lock: locked, v: lockV }, true);
-    sysMsg(locked ? 'Korlátoztad: csak a host kontrollál (lejátszás, lista) 🔒' : 'Mindenki kontrollálhatja a lejátszást és bővítheti a listát 🔓', 'lock');
+    sysMsg(locked ? 'Beállítottad: csak a host kontrollál 🔒' : 'Beállítottad: mindenki kontrollálhat 🔓', 'lock');
     renderMembers();
   }
   function onCfg(m) {
@@ -1522,7 +1522,9 @@
     if (m.lock === locked) return;
     locked = m.lock;
     sess.set('tcwt_lock_' + room, locked ? '1' : '0');
-    if (stateSeen) sysMsg(locked ? 'Csak a host kontrollál (lejátszás, lista) 🔒' : 'Mindenki kontrollálhatja a lejátszást és bővítheti a listát 🔓', 'lock');
+    // a többieknek: ki állította be (a host neve, koronával)
+    const who = hostRec && hostRec.n ? '👑 ' + cleanName(hostRec.n) + ' beállította: ' : '';
+    if (stateSeen) sysMsg(who + (locked ? (who ? 'csak' : 'Csak') + ' a host kontrollál 🔒' : (who ? 'mindenki' : 'Mindenki') + ' kontrollálhat 🔓'), 'lock');
     renderMembers();
   }
   // ---- Közös videósor (Lista) ----
@@ -3143,6 +3145,9 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     // minden változás után: ha nem engedett dolog került bele (emoji, kód, másolt formázás), kitisztítjuk
     const tidy = () => {
       const cur = read(), core = cur.replace(/ {2,}/g, ' ').replace(/^ +| +$/g, ''), ok = cleanNote(core);
+      // a Firefox kiürítéskor egy üres <br>-t (vagy üres elemet) hagy a mezőben: az nem hiba, csak eltakarítjuk
+      const junk = n => n.nodeType === 1 && n.nodeName !== 'IMG' && !n.textContent && !n.querySelector('img');
+      if ([...field.childNodes].some(junk)) { [...field.childNodes].filter(junk).forEach(n => n.remove()); }
       const bad = [...field.childNodes].some(n => n.nodeType !== 3 && !(n.nodeName === 'IMG' && SMILEY_SET.has(n.dataset.s)));
       // a kiszűrt karakterek előtti szóköz maradjon meg (pl. „szia 😀” → „szia ”, és lehet folytatni)
       const kept = Array.from(cur).filter(ch => NOTE_CHAR.test(ch) || ch === '[' || ch === ']').join('');
@@ -3659,7 +3664,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (src && thumbEl.getAttribute('src') !== src) thumbEl.src = src;
     if (tid) { if (!viDone(tid)) wantVideoInfo(tid, true); thumbEl.classList.toggle('a18', isA18(tid)); }
     setShow(thumbEl, src && src !== thumbBad);
-    const lockTxt = locked ? '🔒 Csak a host kontrollál (lejátszás, lista).' : (isHost ? '🔓 Mindenki tudja kontrollálni a lejátszást.' : '');
+    const lockTxt = locked ? '🔒 Csak a host kontrollál' : (isHost ? '🔓 Mindenki kontrollálhat' : '');
     setText(lockNote, lockTxt);
     if (lockNote.classList.contains('open') === locked) lockNote.classList.toggle('open', !locked);
     setShow(lockNote, lockTxt);
