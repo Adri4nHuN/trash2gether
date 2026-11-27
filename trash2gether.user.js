@@ -103,6 +103,22 @@
     }).join('');
   }
   const smileyUrl = f => SMILEY_BASE + f;
+  // Állapot-üzenet (note): csak latin betűk, számok, néhány írásjel és az oldal smiley-jai. Minden más (emoji,
+  // vezérlőkarakter, <, >, {, }, [, ], `, \, = stb.) kiesik – a fogadó oldalon is, nem csak a beíráskor.
+  const NOTE_TEXT_MAX = 80, NOTE_SMILEY_MAX = 6;
+  const NOTE_CHAR = /[A-Za-z0-9\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F .,!?:;()'"%+\/&#-]/;   // ékezetes latin: ő, ű is
+  const noteChars = t => Array.from(String(t || '')).filter(ch => NOTE_CHAR.test(ch)).join('');
+  function cleanNote(raw) {
+    if (typeof raw !== 'string') return '';
+    let txt = 0, sm = 0, out = '';
+    String(raw).slice(0, 2000).split(TOKEN).forEach((p, i) => {
+      if (i % 2) { if (SMILEY_SET.has(p) && sm < NOTE_SMILEY_MAX) { sm++; out += '[s:' + p + ']'; } return; }
+      let t = noteChars(p).replace(/ {2,}/g, ' ');
+      if (txt + t.length > NOTE_TEXT_MAX) t = t.slice(0, Math.max(0, NOTE_TEXT_MAX - txt));
+      txt += t.length; out += t;
+    });
+    return out.replace(/^ +| +$/g, '');
+  }
 
   const mk = get => ({
     get: k => { try { return get().getItem(k); } catch (e) { return null; } },
@@ -951,7 +967,7 @@
   const PRESENCE_TTL = 30 * 60000;
   const presenceOf = mv => {
     const u = safePath(location.pathname + location.search);
-    return { c: cid, n: shown(), a: acct ? 1 : 0, hc: hostRec ? hostRec.c : undefined, br: client ? client.mask : undefined, v: VPATH, ui: myUi, t: u ? pageLabel() : 'Böngészik', u, j: myJoin(), tb: tabId, mv: mv || undefined, ld: ownLead() || isHost ? 1 : undefined, sv: SCRIPT_VERSION, at: Date.now() };
+    return { c: cid, n: shown(), a: acct ? 1 : 0, hc: hostRec ? hostRec.c : undefined, br: client ? client.mask : undefined, v: VPATH, ui: myUi, t: u ? pageLabel() : 'Böngészik', u, j: myJoin(), tb: tabId, mv: mv || undefined, ld: ownLead() || isHost ? 1 : undefined, sv: SCRIPT_VERSION, no: myNote || undefined, at: Date.now() };
   };
   function announce(mv) {
     lastAnnounce = Date.now();
@@ -1336,7 +1352,7 @@
     const was = deviceOnline(c);
     if (m) {
       const mvMs = typeof m.mv === 'number' && isFinite(m.mv) ? Math.min(Math.max(m.mv, 0), 60000) : 0;
-      members.set(psid, { c: c.slice(0, 20), n: cleanName(m.n), hc: typeof m.hc === 'string' ? m.hc.slice(0, 20) : null, v: videoPath(m.v), ui: validUi(m.ui), t: clean(m.t || '', TITLE_MAX), u: safePath(m.u), j: +m.j || 0, a: !!m.a, tb: typeof m.tb === 'string' ? m.tb.slice(0, 20) : null, mv: mvMs ? Date.now() + mvMs : 0, ld: !!m.ld, at: m.at, rx: Date.now(), sv: typeof m.sv === 'string' ? m.sv.slice(0, 20) : '', br: Number.isInteger(m.br) ? m.br & ((1 << BROKERS.length) - 1) : 0 });
+      members.set(psid, { no: cleanNote(m.no), c: c.slice(0, 20), n: cleanName(m.n), hc: typeof m.hc === 'string' ? m.hc.slice(0, 20) : null, v: videoPath(m.v), ui: validUi(m.ui), t: clean(m.t || '', TITLE_MAX), u: safePath(m.u), j: +m.j || 0, a: !!m.a, tb: typeof m.tb === 'string' ? m.tb.slice(0, 20) : null, mv: mvMs ? Date.now() + mvMs : 0, ld: !!m.ld, at: m.at, rx: Date.now(), sv: typeof m.sv === 'string' ? m.sv.slice(0, 20) : '', br: Number.isInteger(m.br) ? m.br & ((1 << BROKERS.length) - 1) : 0 });
       dropGhost(c);
       noteVersion(m.sv);
     } else {
@@ -2363,6 +2379,31 @@ a.qb{text-decoration:none}
 .member:last-child{border-bottom:0}
 .minfo{flex:1;min-width:0}
 .mname{font:600 14.5px/1.3 var(--body);color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mnote{font:italic 400 12.5px/1.35 var(--body);color:var(--sub);margin-top:1px}
+.mnote img,.nfield img{height:1.35em;width:auto;vertical-align:-.3em;margin:0 1px}
+.x.has{position:relative}
+.x.has::after{content:'';position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:var(--hi)}
+.x.on{background:var(--s2)}
+.notepop{position:absolute;top:56px;right:10px;width:min(330px,calc(100% - 20px));z-index:20;display:flex;flex-direction:column;gap:8px;padding:10px 12px 12px;
+  background:var(--bg);border:1px solid var(--bd);border-radius:10px;box-shadow:var(--shadow);animation:t2gpop .14s ease-out}
+@keyframes t2gpop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.nhead{display:flex;align-items:center;gap:8px}
+.ntitle{font:700 14px/1.2 var(--body);color:var(--tx)}
+.ncount{margin-left:auto;font:500 11.5px/1 var(--body);color:var(--mu)}
+.nclose{padding:4px 6px;font-size:14px}
+.nfield{min-height:36px;max-height:72px;overflow:auto;padding:7px 10px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s1);color:var(--tx);
+  font:400 14px/1.45 var(--body);outline:0;overflow-wrap:anywhere;white-space:pre-wrap}
+.nfield:focus{border-color:var(--btn)}
+.nfield:empty::before{content:attr(data-ph);color:var(--mu);pointer-events:none}
+.nhint{font:400 11.5px/1.3 var(--body);color:var(--mu)}
+.nhint.flash{animation:t2gflash 1.2s}
+@keyframes t2gflash{0%,40%{color:#ff6b6b}100%{color:var(--mu)}}
+.nkeys{display:grid;grid-template-columns:repeat(auto-fill,minmax(32px,1fr));gap:2px;max-height:112px;overflow:auto;padding:4px;border:1px solid var(--bd);border-radius:var(--r);background:var(--s1)}
+.nkey{height:32px;padding:3px;border:0;border-radius:6px;background:none;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.nkey:hover,.nkey:focus-visible{background:var(--s2);outline:0}
+.nkey img{max-width:24px;max-height:24px}
+.nrow{display:flex;gap:8px}
+.nrow .btn{flex:1}
 .mact{display:flex;align-items:center;gap:5px;min-width:0;max-width:100%;margin-top:2px;font:400 13px/1.35 var(--body);color:var(--sub)}
 .mact .mtxt{flex:0 1 auto}
 .mact .bi{font-size:12px;color:var(--mu)}
@@ -2575,6 +2616,8 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     'chevron-down': '<path fill-rule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708"/>',
     'person': '<path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6m2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0m4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4m-1-.004c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.289 10 8 10s-3.516.68-4.168 1.332c-.678.678-.83 1.418-.832 1.664z"/>',
     'search': '<path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001q.044.06.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1 1 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0"/>',
+    'note': '<path d="M3.5 1A1.5 1.5 0 0 0 2 2.5v7.8A1.5 1.5 0 0 0 3 11.7v2a.5.5 0 0 0 .82.38L6.68 11.5h5.82A1.5 1.5 0 0 0 14 10V2.5A1.5 1.5 0 0 0 12.5 1zM3 2.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 .5.5V10a.5.5 0 0 1-.5.5H6.5a.5.5 0 0 0-.32.12L4 12.6V11.2a.5.5 0 0 0-.4-.5.5.5 0 0 1-.6-.4z"/><path d="M5 4.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0 2.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 0 1h-3A.5.5 0 0 1 5 7"/>',
+    'trash': '<path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/><path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>',
     'arrow-down': '<path fill-rule="evenodd" d="M8 1a.5.5 0 0 1 .5.5v11.793l3.146-3.147a.5.5 0 0 1 .708.708l-4 4a.5.5 0 0 1-.708 0l-4-4a.5.5 0 0 1 .708-.708L7.5 13.293V1.5A.5.5 0 0 1 8 1"/>',
     'arrow-up': '<path fill-rule="evenodd" d="M8 15a.5.5 0 0 0 .5-.5V2.707l3.146 3.147a.5.5 0 0 0 .708-.708l-4-4a.5.5 0 0 0-.708 0l-4 4a.5.5 0 1 0 .708.708L7.5 2.707V14.5a.5.5 0 0 0 .5.5"/>',
     'x-lg': '<path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z"/>',
@@ -3007,8 +3050,104 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     floatBtn.setAttribute('aria-label', floatBtn.title);
     if (!on) floatLayer.querySelectorAll('.float').forEach(e => e.remove());
   }
+  // ---- Állapot (note): rövid szöveg a neved alatt a Nézők listájában; minden szobában látszik, amíg át nem írod
+  // vagy ki nem törlöd. Beírni egy kis ablakban lehet, smiley-t csak az oldal saját készletéből (a billentyűzetről).
+  let myNote = cleanNote(store.get('tcwt_note') || '');
+  const noteParts = t => String(t || '').split(TOKEN).map((p, i) => i % 2 ? (SMILEY_SET.has(p) ? smileyImg(p) : '') : p).filter(x => x !== '');
+  const noteBtn = btn('x', 'note', '', { onclick: e => { e.stopPropagation(); toggleNote(); } });
+  const paintNoteBtn = () => {
+    noteBtn.classList.toggle('has', !!myNote);
+    noteBtn.title = myNote ? 'Állapotod: ' + myNote.replace(TOKEN, '☺') : 'Állapot beállítása';
+    noteBtn.setAttribute('aria-label', 'Állapot');
+  };
+  paintNoteBtn();
+  let notePop = null;
+  function toggleNote(on) {
+    on = typeof on === 'boolean' ? on : !(notePop && notePop.isConnected);
+    if (!on) { if (notePop) notePop.remove(); noteBtn.classList.remove('on'); return; }
+    notePop = buildNotePop();
+    panel.append(notePop);
+    noteBtn.classList.add('on');
+    setTimeout(() => { const f = notePop.querySelector('.nfield'); f.focus(); const r = document.createRange(); r.selectNodeContents(f); r.collapse(false); const sel = getSel(); if (sel) { sel.removeAllRanges(); sel.addRange(r); } }, 30);
+  }
+  function buildNotePop() {
+    const field = h('div', { class: 'nfield', contenteditable: 'true', role: 'textbox', 'aria-label': 'Állapot', 'data-ph': 'Mit csinálsz épp?', spellcheck: 'false' });
+    const count = h('span', { class: 'ncount' });
+    const hint = h('div', { class: 'nhint', text: 'Csak betű, szám, írásjel és az oldal smiley-jai.' });
+    let range = null;
+    const save = () => { const s2 = getSel(); if (s2 && s2.rangeCount && field.contains(s2.getRangeAt(0).startContainer)) range = s2.getRangeAt(0).cloneRange(); };
+    const read = () => { let o = ''; field.childNodes.forEach(n => { if (n.nodeType === 3) o += n.nodeValue; else if (n.nodeName === 'IMG' && SMILEY_SET.has(n.dataset.s)) o += '[s:' + n.dataset.s + ']'; else o += noteChars(n.textContent); }); return o.replace(/\u00a0/g, ' '); };
+    const fill = t => field.replaceChildren(...String(t).split(TOKEN).map((p, i) => { if (!(i % 2)) return p; const im = smileyImg(p); im.dataset.s = p; return im; }).filter(x => x !== ''));
+    const caretEnd = () => { const r = document.createRange(); r.selectNodeContents(field); r.collapse(false); const s2 = getSel(); if (s2) { s2.removeAllRanges(); s2.addRange(r); } range = r.cloneRange(); };
+    const paint = () => {
+      const cur = read(), sm = (cur.match(TOKEN) || []).length, tl = cur.replace(TOKEN, '').length;
+      count.textContent = tl + '/' + NOTE_TEXT_MAX + (sm ? ' · ' + sm + '/' + NOTE_SMILEY_MAX + ' smiley' : '');
+    };
+    // minden változás után: ha nem engedett dolog került bele (emoji, kód, másolt formázás), kitisztítjuk
+    const tidy = () => {
+      const cur = read(), core = cur.replace(/ {2,}/g, ' ').replace(/^ +| +$/g, ''), ok = cleanNote(core);
+      const bad = [...field.childNodes].some(n => n.nodeType !== 3 && !(n.nodeName === 'IMG' && SMILEY_SET.has(n.dataset.s)));
+      // a kiszűrt karakterek előtti szóköz maradjon meg (pl. „szia 😀” → „szia ”, és lehet folytatni)
+      const kept = Array.from(cur).filter(ch => NOTE_CHAR.test(ch) || ch === '[' || ch === ']').join('');
+      if (ok !== core || bad) { fill(ok + (/ $/.test(kept) && ok ? ' ' : '')); caretEnd(); hint.classList.remove('flash'); void hint.offsetWidth; hint.classList.add('flash'); }
+      paint();
+    };
+    field.addEventListener('input', e => { if (!e.isComposing) tidy(); save(); });
+    field.addEventListener('compositionend', tidy);
+    ['keyup', 'mouseup', 'focus'].forEach(ev => field.addEventListener(ev, save));
+    field.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); toggleNote(false); }
+      e.stopPropagation();   // az oldal billentyűi (szóköz, nyilak, f, m…) ne fussanak le gépelés közben
+    });
+    field.addEventListener('keyup', e => e.stopPropagation());
+    field.addEventListener('keypress', e => e.stopPropagation());
+    field.addEventListener('paste', e => {
+      e.preventDefault();
+      const t = noteChars((e.clipboardData && e.clipboardData.getData('text/plain') || '').replace(/\s+/g, ' '));
+      if (t) { field.focus(); document.execCommand('insertText', false, t); }
+    });
+    field.addEventListener('drop', e => e.preventDefault());
+    const kb = h('div', { class: 'nkeys', role: 'group', 'aria-label': 'Smiley-k' }, ...SMILEYS.map(f => {
+      const b = h('button', { type: 'button', class: 'nkey', title: smileyName(f) }, smileyImg(f));
+      b.addEventListener('mousedown', e => e.preventDefault());   // a mező maradjon fókuszban, a kurzor a helyén
+      b.addEventListener('click', () => {
+        if ((read().match(TOKEN) || []).length >= NOTE_SMILEY_MAX) { hint.classList.remove('flash'); void hint.offsetWidth; hint.classList.add('flash'); return; }
+        const im = smileyImg(f); im.dataset.s = f;
+        let r = range && field.contains(range.startContainer) ? range : null;
+        if (!r) { r = document.createRange(); r.selectNodeContents(field); r.collapse(false); }
+        r.deleteContents(); r.insertNode(im); r.setStartAfter(im); r.collapse(true);
+        const s2 = getSel(); if (s2) { s2.removeAllRanges(); s2.addRange(r); }
+        range = r.cloneRange();
+        paint();
+      });
+      return b;
+    }));
+    function commit() {
+      const v = cleanNote(codesToSmileys(read()));
+      if (v !== myNote) {
+        myNote = v;
+        if (v) store.set('tcwt_note', v); else store.del('tcwt_note');
+        paintNoteBtn();
+        if (room) { announce(); renderMembers(); }
+      }
+      toggleNote(false);
+    }
+    fill(myNote); paint();
+    const pop = h('div', { class: 'notepop', role: 'dialog', 'aria-label': 'Állapot' },
+      h('div', { class: 'nhead' }, h('span', { class: 'ntitle', text: 'Állapot' }), count,
+        btn('x nclose', 'x-lg', '', { title: 'Bezárás', 'aria-label': 'Bezárás', onclick: () => toggleNote(false) })),
+      field, hint, kb,
+      h('div', { class: 'nrow' },
+        btn('btn sec', 'trash', 'Törlés', { title: 'Állapot törlése', onclick: () => { field.replaceChildren(); commit(); } }),
+        btn('btn', 'check-lg', 'Mentés', { onclick: commit })));
+    pop.addEventListener('pointerdown', e => e.stopPropagation());
+    return pop;
+  }
+  // kattintás a panelen máshol: bezárjuk
+  shadow.addEventListener('pointerdown', e => { if (notePop && notePop.isConnected && !e.composedPath().includes(notePop) && !e.composedPath().includes(noteBtn)) toggleNote(false); });
   const headEl = h('header', { title: 'Húzd a mozgatáshoz · dupla katt: alaphelyzet' },
-    logoEl, connChip, h('div', { class: 'hsp' }), floatBtn, btn('x', 'x-lg', '', { 'aria-label': 'Bezár', onclick: () => togglePanel(false) }));
+    logoEl, connChip, h('div', { class: 'hsp' }), noteBtn, floatBtn, btn('x', 'x-lg', '', { 'aria-label': 'Bezár', onclick: () => togglePanel(false) }));
   const rzL = h('div', { class: 'rz rz-l' }), rzT = h('div', { class: 'rz rz-t' }), rzTL = h('div', { class: 'rz rz-tl' });
   const chatCnt = h('span', { class: 'cnt' }), roomNum = h('span', { class: 'num' });
   const tabRoom = h('button', { class: 'tab', role: 'tab', type: 'button', onclick: () => setView('room') }, icon('people-fill'), h('span', { text: 'Szoba' }), roomNum);
@@ -3375,14 +3514,14 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     const isHostEntry = m => !!(hostRec && hostConfirmed && m.c === hostRec.c && (!hostRec.tab || m.tb === hostRec.tab));
     members.forEach(m => { const o = byDevice.get(m.c); if (!o || (!isHostEntry(o) && (isHostEntry(m) || (m.ld && !o.ld)))) byDevice.set(m.c, m); });
     const others = [...byDevice.values()].map(m => Object.assign({}, m, { h: isHostEntry(m) }));
-    const list = [{ n: shown(), self: true, h: isHost, ui: myUi, v: VPATH, t: pageLabel(), u: location.pathname + location.search }, ...others];
+    const list = [{ n: shown(), self: true, h: isHost, ui: myUi, v: VPATH, t: pageLabel(), u: location.pathname + location.search, no: myNote }, ...others];
     setText(countEl, 'Nézők (' + list.length + ')');
     setText(roomNum, String(list.length));
     // Csak akkor rajzoljuk újra a listát, ha tényleg változott benne valami (a 4 mp-es szinkronüzenetek
     // ne cseréljék le folyton a DOM-ot: nem villognak a profilképek, nem vész el az egér alatti gomb).
     const here0 = location.pathname + location.search;
     const sig = JSON.stringify([isHost, roomV, here0, modArmed && [modArmed.c, modArmed.act],
-      list.map(m => [m.n, m.self ? 1 : 0, m.h ? 1 : 0, m.ui, m.v, m.t, m.u, m.ghost ? 1 : 0, m.c, m.tb, m.a ? 1 : 0])]);
+      list.map(m => [m.n, m.self ? 1 : 0, m.h ? 1 : 0, m.ui, m.v, m.t, m.u, m.ghost ? 1 : 0, m.c, m.tb, m.a ? 1 : 0, m.no || ''])]);
     if (sig !== membersSig || membersEl.childElementCount !== list.length) {
       membersSig = sig;
       membersEl.replaceChildren(...list.map(m => {
@@ -3392,6 +3531,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
           avatarEl(m.n, m.ui),
           h('div', { class: 'minfo' },
             h('div', { class: 'mname', title: m.n, text: (m.h ? '👑 ' : '') + m.n + (m.self ? ' (te)' : '') }),
+            m.no ? marq('mnote', noteParts(m.no)) : null,
             !m.t ? null
               : (!m.self && m.u && m.u !== location.pathname + location.search)
                 ? h('button', { class: 'mact go' + (here ? ' here' : ''), title: 'Ugrás ide: ' + m.t, onclick: () => followMember(m) },
@@ -3628,16 +3768,23 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   setInterval(() => { if (mqObs) mqEls.forEach(el => { if (!el.isConnected) { mqObs.unobserve(el); mqEls.delete(el); } }); }, 60000);
   // Két sorra levágott cím: rámutatáskor egy sorban végigfut (a magassága közben nem változik).
   function hoverMarq(el) {
-    let txt = null;
-    el.addEventListener('mouseenter', () => {
-      if (txt !== null || (el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1)) return;
+    let txt = null, wait = null;
+    el.addEventListener('mouseenter', e => {
+      clearTimeout(wait);
+      if (e.buttons) return;
+      wait = setTimeout(start, 450);   // csak ha egy pillanatig rajta marad az egér (megfogáskor ne ugorjon a szöveg)
+    });
+    el.addEventListener('pointerdown', () => clearTimeout(wait));
+    const start = () => {
+      if (qDrag || txt !== null || (el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1)) return;
       txt = el.textContent;
       el.style.minHeight = el.offsetHeight + 'px';
       el.classList.add('mq', 'hovmq');
       el.replaceChildren(h('span', { class: 'mqi', text: txt }));
       fitMarq(el);
-    });
+    };
     el.addEventListener('mouseleave', () => {
+      clearTimeout(wait);
       if (txt === null) return;
       el.classList.remove('mq', 'hovmq', 'run');
       el.style.minHeight = '';
