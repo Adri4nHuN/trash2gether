@@ -2861,7 +2861,6 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       if (!on) {
         if (Math.abs(ev.clientY - y0) < 6) return;
         on = true; qDrag = id; row.classList.add('dragging');
-        try { row.setPointerCapture(e.pointerId); } catch (err) {}
       }
       ev.preventDefault();
       const rs = rows(), from = rs.indexOf(row);
@@ -2876,13 +2875,14 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
       const sc = liveEl, b = sc.getBoundingClientRect();
       if (ev.clientY < b.top + 30) sc.scrollTop -= 12; else if (ev.clientY > b.bottom - 30) sc.scrollTop += 12;
     };
+    // az egész ablakot figyeljük: gyors mozdulatnál az egér azonnal a megfogott soron kívül van
     const end = () => {
-      row.removeEventListener('pointermove', move); row.removeEventListener('pointerup', end); row.removeEventListener('pointercancel', end);
+      window.removeEventListener('pointermove', move, true); window.removeEventListener('pointerup', end, true); window.removeEventListener('pointercancel', end, true);
       if (!on) return;
       row.classList.remove('dragging'); clear(); qDrag = null;
       if (to >= 0) qMove(id, to);
     };
-    row.addEventListener('pointermove', move); row.addEventListener('pointerup', end); row.addEventListener('pointercancel', end);
+    window.addEventListener('pointermove', move, true); window.addEventListener('pointerup', end, true); window.addEventListener('pointercancel', end, true);
   }
   let qSig = '';
   function renderQueue() {
