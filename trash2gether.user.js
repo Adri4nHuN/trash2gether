@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.21
+// @version      1.22
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
@@ -26,7 +26,7 @@
   de.setAttribute('data-trash2gether', '');
 
   // A fejléc @version sorával egyezzen (a release.py mindkettőt egyszerre írja át).
-  const SCRIPT_VERSION = '1.21';
+  const SCRIPT_VERSION = '1.22';
   // Ha valaki a szobában újabb változatot használ, felajánljuk a frissítést. A Tampermonkey a .user.js címet
   // megnyitva rögtön a frissítő oldalát mutatja; a bővítmény-kiadásban ez a projekt oldalára mutat (build.py).
   const UPDATE_URL = 'https://raw.githubusercontent.com/Adri4nHuN/trash2gether/main/trash2gether.user.js';
@@ -1014,14 +1014,15 @@
     if (!room || !key) return;
     try {
       const b = await seal(await signText(signedBody('m', { id: sid, k: 'bye', c: cid, n: shown(), ts: Date.now(), q: rand(8) })), 'm', key);
-      const mvp = await seal(await signText(signedBody('p/' + sid, presenceOf(20000))), 'p/' + sid, key);
+      // a host oldalváltásánál hosszabb türelem (pl. a 18+ videók megerősítő ablaka is ennyit várhat)
+      const mvp = await seal(await signText(signedBody('p/' + sid, presenceOf(isHost ? 60000 : 20000))), 'p/' + sid, key);
       if (key === roomKey) { byeMsg = b; moveMsg = mvp; byeAt = Date.now(); }
     } catch (e) {}
   }
   function movingNow() {
     const c = client;
     if (moveMsg && c && c.connected && Date.now() - byeAt < 8 * 60000) { try { c.publish(T('p/' + sid), moveMsg, { retain: true }); return; } catch (e) {} }
-    announce(20000);
+    announce(isHost ? 60000 : 20000);
   }
   // Lap/böngésző bezárva: a többiek rögtön lássák, hogy kilépett (ne „Átvált…” legyen 20 mp-ig).
   function goneNow() {
