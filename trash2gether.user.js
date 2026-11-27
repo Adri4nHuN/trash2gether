@@ -1586,7 +1586,7 @@
       return false;
     }
     publish('m', { id: sid, c: cid, k: 'qadd', n: shown(), ts: Date.now(), q: rand(8), it: { id: it.id, p: it.p, t: it.t, d: it.d, s: it.s } });
-    showToast([icon('check-lg'), h('span', { text: ' Javasoltad a hostnak' })], 1600, '');
+    showToast([icon('check-lg'), h('span', { text: ' Listára téve' })], 1600, '');
     return true;
   }
   const sugRate = new Map();
@@ -1600,7 +1600,7 @@
     if (!it) return;
     // csak az kerül a chatbe, amit a host tényleg felvehet (nincs már a listán, nem ez megy épp, van hely)
     if (inQueue(it.id) || (roomV && sameVideo('/video/' + it.id, roomV)) || queue.length >= Q_MAX) return;
-    sysMsg('💡 ' + cleanName(m.n) + ' javasolta: ' + it.t);
+    sysMsg('➕ ' + cleanName(m.n) + ' hozzáadta: ' + it.t);
     if (isHost) qAddLocal(it);
   }
   // A host oldala: ha egy sorban lévő videóra került (bármi módon), az lekerül a sorról.
@@ -2316,7 +2316,12 @@ header .x.off{opacity:.5}
 .qrow:last-child{border-bottom:0}
 .qthumb{width:64px;height:36px;object-fit:cover;border-radius:5px;flex:none;background:var(--s2)}
 .qinfo{min-width:0;flex:1;text-decoration:none;color:inherit}
-.qinfo:hover .qtitle{text-decoration:underline}
+.qrow.pick{cursor:pointer;margin:0 -8px;padding:6px 8px;border-radius:6px}
+.qrow.pick:hover,.qrow.pick:focus-visible{background:var(--s2);outline:0}
+.qrow.pick.added{cursor:default;background:transparent}
+.qrow.pick.added .qthumb,.qrow.pick.added .qinfo{opacity:.55}
+.qok{width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--hi)}
+a.qb{text-decoration:none}
 .qtitle{font:600 12.5px/1.3 var(--body);color:var(--tx);overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2}
 .qmeta{font:500 11.5px/1.3 var(--body);color:var(--mu)}
 .mq{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0}
@@ -2787,27 +2792,37 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     if (!items) { qResults.replaceChildren(h('div', { class: 'muted qnote', text: 'A keresés nem sikerült.' })); return; }
     qResults.replaceChildren(...(items.length ? items.map(it => qRow(it, 'res')) : [h('div', { class: 'muted qnote', text: 'Nincs találat.' })]));
   }
+  // Egy videó a találatok vagy a lista között. Találatnál a sorra kattintva (vagy Enterrel) kerül a listára; a
+  // megnyitás külön gomb (új lapon), hogy egy elkattintás ne vigye el az oldalt.
   function qRow(it, mode, idx) {
     const img = h('img', { class: 'qthumb', alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'same-origin', src: location.origin + '/media/videos/tmb/' + it.id + '/default.jpg' });
     img.addEventListener('error', () => { img.style.visibility = 'hidden'; });
     if (mode === 'q' && !(vinfo[it.id] && vinfo[it.id].ok)) wantVideoInfo(it.id, true);
     const vi = vinfo[it.id] || {};
     const d = it.d || vi.d;
-    const meta = [d ? fmtTime(d) : '', it.s ? 'innen: ' + fmtTime(it.s) : '', views(vi), vi.u || '', mode === 'q' && it.by ? 'javasolta: ' + it.by : ''].filter(Boolean);
-    const info = h('a', { class: 'qinfo', href: location.origin + it.p + (it.s ? '?t=' + it.s : ''), target: '_blank', rel: 'noopener', title: it.t + ' – megnyitás új lapon' },
+    const meta = [d ? fmtTime(d) : '', it.s ? 'innen: ' + fmtTime(it.s) : '', views(vi), vi.u || '', mode === 'q' && it.by ? 'hozzáadta: ' + it.by : ''].filter(Boolean);
+    const info = h('div', { class: 'qinfo' },
       h('div', { class: 'qtitle', text: (mode === 'q' ? (idx + 1) + '. ' : '') + it.t }), meta.length ? marq('qmeta', metaLine(meta)) : null);
     const acts = h('div', { class: 'qacts' });
+    const open = h('a', { class: 'qb', href: location.origin + it.p + (it.s ? '?t=' + it.s : ''), target: '_blank', rel: 'noopener',
+      title: 'Megnyitás új lapon', 'aria-label': 'Megnyitás új lapon: ' + it.t, onclick: e => e.stopPropagation() }, icon('box-arrow-up-right'));
     if (mode === 'res') {
-      const done = inQueue(it.id);
-      const b = btn('qb', done ? 'check-lg' : 'plus-lg', '', { type: 'button', title: done ? 'Már a listán van' : isHost ? 'Listára' : 'Javaslat a hostnak', 'aria-label': isHost ? 'Listára' : 'Javaslat a hostnak',
-        onclick: e => { e.stopPropagation(); if (suggest(it)) { b.replaceChildren(icon('check-lg')); b.disabled = true; } } });
-      if (done) b.disabled = true;
-      acts.append(b);
-    } else if (isHost) {
+      const row = h('div', { class: 'qrow pick', role: 'button', tabindex: '0' }, img, info, acts);
+      const mark = () => { row.classList.add('added'); row.setAttribute('aria-disabled', 'true'); row.title = 'Már a listán van'; acts.prepend(h('span', { class: 'qok' }, icon('check-lg'))); };
+      const add = () => { if (!row.classList.contains('added') && suggest(it)) mark(); };
+      row.title = 'Listára';
+      row.addEventListener('click', add);
+      row.addEventListener('keydown', e => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); add(); } });
+      acts.append(open);
+      if (inQueue(it.id)) mark();
+      return row;
+    }
+    if (isHost) {
       acts.append(btn('qb', 'play-fill', '', { type: 'button', title: 'Lejátszás most', 'aria-label': 'Lejátszás most', onclick: () => qPlay(it.id) }));
       if (idx > 0) acts.append(btn('qb', 'arrow-up', '', { type: 'button', title: 'Feljebb', 'aria-label': 'Feljebb', onclick: () => qUp(it.id) }));
       acts.append(btn('qb', 'x-lg', '', { type: 'button', title: 'Törlés a listáról', 'aria-label': 'Törlés a listáról', onclick: () => qRemove(it.id) }));
     }
+    acts.append(open);
     return h('div', { class: 'qrow' }, img, info, acts);
   }
   let qSig = '';
@@ -2823,7 +2838,7 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
     }
     const here = vidId(VPATH);
     qHereBtn.style.display = room && here && !(roomV && sameVideo(VPATH, roomV)) && !inQueue(here) ? '' : 'none';
-    qHereBtn.querySelector('span').textContent = isHost ? 'Ez a videó a listára' : 'Ezt a videót javaslom';
+    qHereBtn.querySelector('span').textContent = 'Ez a videó a listára';
   }
   const queueSec = section('queue', qCount, h('div', { class: 'qsearch' }, qSearchIn, qSearchBtn), qResults, qHereBtn, qList);
 
@@ -3558,10 +3573,17 @@ a.sys.svid:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
   }
   const siteIcon = n => { const e = icon(n); e.setAttribute('class', 'bi si'); return e; };
   const views = i => i.views != null && isFinite(i.views) ? ['site-eye', i.views.toLocaleString('hu-HU')] : null;
+  // „3 hónappal ezelőtt” → „3 hónapja” (rövidebb, jobban elfér)
+  const AGE_UNITS = [[/^másodperc/, 'másodperce'], [/^perc/, 'perce'], [/^ór/, 'órája'], [/^nap/, 'napja'], [/^h[ée]t/, 'hete'], [/^hónap/, 'hónapja'], [/^év/, 'éve']];
+  function shortAge(a) {
+    const m = /^(\d+)\s+(\S+)\s+ezelőtt$/.exec(String(a || '').trim());
+    const u = m && AGE_UNITS.find(x => x[0].test(m[2]));
+    return u ? m[1] + ' ' + u[1] : String(a || '');
+  }
   function cardMeta(vid) {
     const i = vinfo[vid];
     if (!i) return null;
-    const parts = [i.d > 0 ? fmtTime(i.d) : '', views(i), i.u || '', i.age || '',
+    const parts = [i.d > 0 ? fmtTime(i.d) : '', views(i), i.u || '', shortAge(i.age),
       i.lk != null || i.dl != null ? ['site-up', i.lk || 0, 'site-down', i.dl || 0] : null].filter(Boolean);
     const kids = [];
     if (parts.length) kids.push(marq('smeta', metaLine(parts)));
