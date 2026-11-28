@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trash2Gether
 // @namespace    t2g
-// @version      1.26
+// @version      1.27
 // @description  Üdvözlendő hír hete
 // @match        https://trashcity.net/*
 // @match        https://www.trashcity.net/*
